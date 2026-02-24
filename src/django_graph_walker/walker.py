@@ -15,13 +15,20 @@ from django_graph_walker.spec import Follow, GraphSpec, Ignore
 logger = logging.getLogger(__name__)
 
 
-# Which field classes represent traversable edges by default
-_DEFAULT_FOLLOW = {
+# All in-scope edge types that can be traversed with explicit Follow()
+_ALL_IN_SCOPE = {
     FieldClass.FK_IN_SCOPE,
     FieldClass.M2M_IN_SCOPE,
     FieldClass.REVERSE_FK_IN_SCOPE,
     FieldClass.REVERSE_M2M_IN_SCOPE,
     FieldClass.O2O_IN_SCOPE,
+    FieldClass.REVERSE_O2O_IN_SCOPE,
+    FieldClass.GENERIC_RELATION_IN_SCOPE,
+}
+
+# Default: only follow ownership/reverse edges (children, not parents/references)
+_DEFAULT_FOLLOW = {
+    FieldClass.REVERSE_FK_IN_SCOPE,
     FieldClass.REVERSE_O2O_IN_SCOPE,
     FieldClass.GENERIC_RELATION_IN_SCOPE,
 }
@@ -72,8 +79,8 @@ class GraphWalker:
             if isinstance(override, Ignore):
                 return False
             if isinstance(override, Follow):
-                # Follow override on an edge — but target must still be in spec
-                return field_info.field_class in _DEFAULT_FOLLOW
+                # Follow override enables traversal on any in-scope edge
+                return field_info.field_class in _ALL_IN_SCOPE
             # Other overrides (Override, KeepOriginal, Anonymize) don't affect traversal
             return field_info.field_class in _DEFAULT_FOLLOW
 
@@ -145,6 +152,9 @@ class GraphWalker:
             # Forward FK/O2O: single instance
             related = getattr(instance, field_info.name, None)
             if related is not None:
+                filter_fn = self._get_filter(type(instance), field_info)
+                if filter_fn and not filter_fn(ctx or {}, related):
+                    return []
                 return [related]
             return []
 
@@ -153,7 +163,22 @@ class GraphWalker:
             manager = getattr(instance, field_info.name, None)
             if manager is None:
                 return []
-            return list(manager.all())
+
+            qs = manager.all()
+
+            # Apply prefetch
+            prefetch = self._get_prefetch(type(instance), field_info)
+            if prefetch:
+                qs = prefetch(qs)
+
+            instances = list(qs)
+
+            # Apply filter
+            filter_fn = self._get_filter(type(instance), field_info)
+            if filter_fn:
+                instances = [i for i in instances if filter_fn(ctx or {}, i)]
+
+            return instances
 
         return []
 

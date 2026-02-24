@@ -24,6 +24,12 @@ class WalkResult:
         self._visited = visited
         self._spec_models = spec_models
 
+    def __or__(self, other: WalkResult) -> WalkResult:
+        """Merge two walk results, combining visited instances and spec models."""
+        merged = dict(self._visited)
+        merged.update(other._visited)
+        return WalkResult(merged, self._spec_models | other._spec_models)
+
     @property
     def instance_count(self) -> int:
         return len(self._visited)

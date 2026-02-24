@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from django_graph_walker import GraphSpec, GraphWalker
+from django_graph_walker import Follow, GraphSpec, GraphWalker
 from django_graph_walker.actions.export import Export
 from tests.testapp.models import (
     Article,
@@ -14,9 +14,37 @@ from tests.testapp.models import (
 )
 
 
+# Shared spec that follows forward edges from Article so all related instances are collected
+def _article_spec(*extra_models):
+    models = {
+        Article: {"author": Follow(), "category": Follow(), "reviewer": Follow()},
+        Author: {},
+        Category: {"parent": Follow()},
+    }
+    for m in extra_models:
+        models[m] = {}
+    return GraphSpec(models)
+
+
+def _article_spec_with_tags():
+    return GraphSpec(
+        {
+            Article: {
+                "author": Follow(),
+                "category": Follow(),
+                "reviewer": Follow(),
+                "tags": Follow(),
+            },
+            Author: {},
+            Tag: {},
+            Category: {"parent": Follow()},
+        }
+    )
+
+
 class TestExportToFixture:
     def test_export_json_format(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = _article_spec()
         result = GraphWalker(spec).walk(article)
         output = Export(format="json").to_fixture(result)
         data = json.loads(output)
@@ -26,7 +54,7 @@ class TestExportToFixture:
     def test_exported_fixture_contains_all_instances(
         self, article, author, child_category, root_category
     ):
-        spec = GraphSpec(Article, Author, Category)
+        spec = _article_spec()
         result = GraphWalker(spec).walk(article)
         output = Export(format="json").to_fixture(result)
         data = json.loads(output)
@@ -47,7 +75,7 @@ class TestExportToFixture:
 
     def test_fixture_in_dependency_order(self, article, author, child_category, root_category):
         """FKs should point to objects serialized earlier in the fixture."""
-        spec = GraphSpec(Article, Author, Category)
+        spec = _article_spec()
         result = GraphWalker(spec).walk(article)
         output = Export(format="json").to_fixture(result)
         data = json.loads(output)
@@ -60,7 +88,7 @@ class TestExportToFixture:
         assert first_author_idx < first_article_idx
 
     def test_export_with_m2m(self, article, tag_python, tag_django):
-        spec = GraphSpec(Article, Tag, Author, Category)
+        spec = _article_spec_with_tags()
         result = GraphWalker(spec).walk(article)
         output = Export(format="json").to_fixture(result)
         data = json.loads(output)
@@ -102,7 +130,7 @@ class TestExportToFile:
 class TestExportToDatabase:
     def test_export_to_secondary_db(self, article, author, child_category, root_category):
         """Export instances to a secondary database."""
-        spec = GraphSpec(Article, Author, Category)
+        spec = _article_spec()
         result = GraphWalker(spec).walk(article)
         Export().to_database(result, target_db="secondary")
 
@@ -112,7 +140,7 @@ class TestExportToDatabase:
 
     def test_export_preserves_fk_integrity(self, article, author, child_category, root_category):
         """FK relationships should be remapped correctly in target DB."""
-        spec = GraphSpec(Article, Author, Category)
+        spec = _article_spec()
         result = GraphWalker(spec).walk(article)
         Export().to_database(result, target_db="secondary")
 
@@ -123,7 +151,7 @@ class TestExportToDatabase:
 
     def test_export_preserves_m2m(self, article, author, child_category, tag_python, tag_django):
         """M2M relationships should be preserved in target DB."""
-        spec = GraphSpec(Article, Author, Tag, Category)
+        spec = _article_spec_with_tags()
         result = GraphWalker(spec).walk(article)
         Export().to_database(result, target_db="secondary")
 

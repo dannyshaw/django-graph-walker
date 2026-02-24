@@ -120,6 +120,18 @@ class GraphSpec:
             raise ValueError(f"Model {model.__name__} specified more than once in GraphSpec")
         self._models[model] = overrides
 
+    def __or__(self, other: GraphSpec) -> GraphSpec:
+        """Merge two specs. Later spec's overrides win on conflict."""
+        result = GraphSpec()
+        for model, overrides in self._models.items():
+            result._models[model] = dict(overrides)
+        for model, overrides in other._models.items():
+            if model in result._models:
+                result._models[model].update(overrides)
+            else:
+                result._models[model] = dict(overrides)
+        return result
+
     @property
     def models(self) -> set[type[Model]]:
         """Set of all models in this spec."""

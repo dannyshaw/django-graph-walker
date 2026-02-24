@@ -2,7 +2,7 @@
 
 import pytest
 
-from django_graph_walker import GraphSpec, GraphWalker
+from django_graph_walker import Follow, GraphSpec, GraphWalker
 from django_graph_walker.actions.visualize import Visualize
 from tests.testapp.models import (
     Article,
@@ -79,14 +79,26 @@ class TestSchemaVisualization:
 
 class TestInstanceVisualization:
     def test_instances_returns_dot_string(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         dot = Visualize().instances(result)
         assert isinstance(dot, str)
         assert "digraph" in dot
 
     def test_instances_contains_instance_nodes(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         dot = Visualize().instances(result)
         # Should contain representations of actual instances
@@ -94,7 +106,13 @@ class TestInstanceVisualization:
         assert "Alice" in dot or "Author" in dot
 
     def test_instances_contains_edges(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         dot = Visualize().instances(result)
         assert "->" in dot
@@ -111,7 +129,13 @@ class TestVisualizeToDot:
 
     def test_instances_to_graphviz_object(self, article, author, child_category):
         graphviz = pytest.importorskip("graphviz")
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         source = Visualize().instances_to_graphviz(result)
         assert isinstance(source, graphviz.Source)

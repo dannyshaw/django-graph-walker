@@ -19,8 +19,17 @@ class TestGraphWalkerBasic:
         assert author in result
 
     def test_walk_follows_fk_to_in_scope(self, article, author, child_category):
-        """Article has FK to Author and Category — both in scope, should collect all."""
-        spec = GraphSpec(Article, Author, Category)
+        """Article has FK to Author and Category — both in scope, explicit Follow needed."""
+        spec = GraphSpec(
+            {
+                Article: {
+                    "author": Follow(),
+                    "category": Follow(),
+                },
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         assert article in result
         assert author in result
@@ -48,14 +57,14 @@ class TestGraphWalkerBasic:
         assert article not in result
 
     def test_walk_follows_self_referential_fk(self, root_category, child_category):
-        """Category.parent is self-referential FK — should walk up to root."""
-        spec = GraphSpec(Category)
+        """Category.parent is self-referential FK — needs explicit Follow to walk up."""
+        spec = GraphSpec({Category: {"parent": Follow()}})
         result = GraphWalker(spec).walk(child_category)
         assert child_category in result
         assert root_category in result
 
     def test_walk_follows_reverse_self_referential(self, root_category, child_category):
-        """Walking from root should find children."""
+        """Walking from root should find children via reverse FK (default)."""
         spec = GraphSpec(Category)
         result = GraphWalker(spec).walk(root_category)
         assert root_category in result
@@ -64,8 +73,19 @@ class TestGraphWalkerBasic:
 
 class TestGraphWalkerM2M:
     def test_walk_follows_m2m_in_scope(self, article, tag_python, tag_django):
-        """Article.tags M2M — Tag in scope should collect both tags."""
-        spec = GraphSpec(Article, Tag, Author, Category)
+        """Article.tags M2M — Tag in scope, explicit Follow needed."""
+        spec = GraphSpec(
+            {
+                Article: {
+                    "tags": Follow(),
+                    "author": Follow(),
+                    "category": Follow(),
+                },
+                Tag: {},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         assert tag_python in result
         assert tag_django in result
@@ -77,8 +97,15 @@ class TestGraphWalkerM2M:
         assert tag_python not in result
 
     def test_walk_follows_reverse_m2m_in_scope(self, tag_python, article):
-        """Walking from Tag with Article in scope should find articles."""
-        spec = GraphSpec(Tag, Article, Author, Category)
+        """Walking from Tag with Article in scope — reverse M2M needs explicit Follow."""
+        spec = GraphSpec(
+            {
+                Tag: {"articles": Follow()},
+                Article: {},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(tag_python)
         assert tag_python in result
         assert article in result
@@ -86,21 +113,28 @@ class TestGraphWalkerM2M:
 
 class TestGraphWalkerOneToOne:
     def test_walk_follows_o2o_in_scope(self, article, article_stats):
-        """Article.stats reverse O2O — ArticleStats in scope should collect."""
+        """Article.stats reverse O2O — ArticleStats in scope should collect (default)."""
         spec = GraphSpec(Article, ArticleStats, Author, Category)
         result = GraphWalker(spec).walk(article)
         assert article_stats in result
 
     def test_walk_follows_forward_o2o(self, article_stats, article):
-        """Walking from ArticleStats should follow FK to Article."""
-        spec = GraphSpec(ArticleStats, Article, Author, Category)
+        """Walking from ArticleStats should follow FK to Article with explicit Follow."""
+        spec = GraphSpec(
+            {
+                ArticleStats: {"article": Follow()},
+                Article: {},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article_stats)
         assert article in result
 
 
 class TestGraphWalkerGenericFK:
     def test_walk_follows_generic_relation(self, article, comment, author):
-        """Article has GenericRelation to Comment — should collect."""
+        """Article has GenericRelation to Comment — should collect (default)."""
         spec = GraphSpec(Article, Comment, Author, Category)
         result = GraphWalker(spec).walk(article)
         assert comment in result
@@ -110,6 +144,51 @@ class TestGraphWalkerGenericFK:
         spec = GraphSpec(Article, Author, Category)
         result = GraphWalker(spec).walk(article)
         assert comment not in result
+
+
+class TestGraphWalkerDefaultFollowBehavior:
+    """Verify that forward edges are NOT followed by default."""
+
+    def test_forward_fk_not_followed_by_default(self, article, author):
+        """Article→Author forward FK should not be followed without explicit Follow."""
+        spec = GraphSpec(Article, Author, Category)
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert author not in result
+
+    def test_forward_m2m_not_followed_by_default(self, article, tag_python, tag_django):
+        """Article→Tag forward M2M should not be followed without explicit Follow."""
+        spec = GraphSpec(Article, Tag, Author, Category)
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert tag_python not in result
+        assert tag_django not in result
+
+    def test_forward_o2o_not_followed_by_default(self, article_stats, article):
+        """ArticleStats→Article forward O2O should not be followed without explicit Follow."""
+        spec = GraphSpec(ArticleStats, Article, Author, Category)
+        result = GraphWalker(spec).walk(article_stats)
+        assert article_stats in result
+        assert article not in result
+
+    def test_reverse_m2m_not_followed_by_default(self, tag_python, article):
+        """Tag→Article reverse M2M should not be followed without explicit Follow."""
+        spec = GraphSpec(Tag, Article, Author, Category)
+        result = GraphWalker(spec).walk(tag_python)
+        assert tag_python in result
+        assert article not in result
+
+    def test_explicit_follow_overrides_default_ignore(self, article, author):
+        """Follow() on a forward FK should force traversal."""
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow()},
+                Author: {},
+            }
+        )
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert author in result
 
 
 class TestGraphWalkerFiltering:
@@ -155,13 +234,65 @@ class TestGraphWalkerFiltering:
         # Even with Follow(), Article isn't in spec so shouldn't be collected
         assert result.instance_count == 1
 
+    def test_forward_m2m_with_filter(self, article, tag_python, tag_django):
+        """Follow(filter=...) on forward M2M should filter related instances."""
+        spec = GraphSpec(
+            {
+                Article: {
+                    "tags": Follow(filter=lambda ctx, instance: instance.name == "python"),
+                },
+                Tag: {},
+            }
+        )
+        result = GraphWalker(spec).walk(article)
+        assert tag_python in result
+        assert tag_django not in result
+
+    def test_forward_fk_with_filter(self, db):
+        """Follow(filter=...) on forward FK should filter the related instance."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        article = Article.objects.create(
+            title="Test",
+            body="body",
+            author=author,
+            category=cat,
+            published=True,
+        )
+
+        # Filter that rejects the author
+        spec = GraphSpec(
+            {
+                Article: {
+                    "author": Follow(filter=lambda ctx, instance: instance.name == "Bob"),
+                },
+                Author: {},
+            }
+        )
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert author not in result
+
+        # Filter that accepts the author
+        spec2 = GraphSpec(
+            {
+                Article: {
+                    "author": Follow(filter=lambda ctx, instance: instance.name == "Alice"),
+                },
+                Author: {},
+            }
+        )
+        result2 = GraphWalker(spec2).walk(article)
+        assert article in result2
+        assert author in result2
+
 
 class TestGraphWalkerCycles:
     def test_handles_circular_fk(self, db):
         """Self-referential models should not cause infinite loops."""
         root = Category.objects.create(name="Root")
         child = Category.objects.create(name="Child", parent=root)
-        # Walk from root → child → root (cycle via parent FK)
+        # Walk from root → child (reverse FK, default follow)
         spec = GraphSpec(Category)
         result = GraphWalker(spec).walk(root)
         assert result.instance_count == 2
@@ -173,7 +304,13 @@ class TestGraphWalkerCycles:
         # Make reviewer same as author
         article.reviewer = author
         article.save()
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "reviewer": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         models_by_type = result.by_model()
         # Only 1 author instance, not 2
@@ -212,7 +349,13 @@ class TestGraphWalkerContext:
 
 class TestWalkResult:
     def test_by_model(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         by_model = result.by_model()
         assert Article in by_model
@@ -221,7 +364,13 @@ class TestWalkResult:
         assert len(by_model[Article]) == 1
 
     def test_model_count(self, article, author, child_category):
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         assert result.model_count >= 3  # Article, Author, Category (may include reviewer's Author)
 
@@ -240,7 +389,13 @@ class TestWalkResult:
 
     def test_topological_order(self, article, author, child_category, root_category):
         """Models should be ordered so dependencies come before dependents."""
-        spec = GraphSpec(Article, Author, Category)
+        spec = GraphSpec(
+            {
+                Article: {"author": Follow(), "category": Follow()},
+                Author: {},
+                Category: {},
+            }
+        )
         result = GraphWalker(spec).walk(article)
         order = result.topological_order()
         # Author and Category should come before Article (Article depends on both)
@@ -257,3 +412,43 @@ class TestWalkResult:
         # Non-walked instance should not be in result
         other = Author(pk=99999, name="Other", email="o@o.com")
         assert other not in result
+
+
+class TestWalkResultComposition:
+    def test_result_or_merges_instances(self, db):
+        """WalkResult + WalkResult should merge instances from both."""
+        a1 = Author.objects.create(name="A1", email="a1@test.com")
+        a2 = Author.objects.create(name="A2", email="a2@test.com")
+
+        spec = GraphSpec(Author)
+        result1 = GraphWalker(spec).walk(a1)
+        result2 = GraphWalker(spec).walk(a2)
+
+        merged = result1 | result2
+        assert a1 in merged
+        assert a2 in merged
+        assert merged.instance_count == 2
+
+    def test_result_or_deduplicates(self, db):
+        """Overlapping instances should not be duplicated."""
+        a1 = Author.objects.create(name="A1", email="a1@test.com")
+
+        spec = GraphSpec(Author)
+        result1 = GraphWalker(spec).walk(a1)
+        result2 = GraphWalker(spec).walk(a1)
+
+        merged = result1 | result2
+        assert merged.instance_count == 1
+
+    def test_result_or_merges_spec_models(self, db):
+        """Merged result should have spec_models from both results."""
+        a = Author.objects.create(name="A", email="a@test.com")
+        cat = Category.objects.create(name="Cat")
+
+        result1 = GraphWalker(GraphSpec(Author)).walk(a)
+        result2 = GraphWalker(GraphSpec(Category)).walk(cat)
+
+        merged = result1 | result2
+        assert a in merged
+        assert cat in merged
+        assert merged.instance_count == 2

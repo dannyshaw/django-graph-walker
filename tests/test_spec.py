@@ -134,3 +134,40 @@ class TestOverrideTypes:
 
         a = Anonymize(anon_fn)
         assert a.provider is anon_fn
+
+
+class TestGraphSpecComposition:
+    def test_spec_or_disjoint_models(self):
+        """Two specs with different models merge cleanly."""
+        spec1 = GraphSpec(Author)
+        spec2 = GraphSpec(Article, Category)
+        merged = spec1 | spec2
+        assert merged.models == {Author, Article, Category}
+
+    def test_spec_or_overlapping_models(self):
+        """Two specs with the same model merge overrides."""
+        spec1 = GraphSpec({Author: {"name": Override("A")}})
+        spec2 = GraphSpec({Author: {"email": Override("b@b.com")}})
+        merged = spec1 | spec2
+        assert Author in merged
+        overrides = merged.get_overrides(Author)
+        assert "name" in overrides
+        assert "email" in overrides
+
+    def test_spec_or_override_conflict(self):
+        """Later spec's overrides win on conflict."""
+        spec1 = GraphSpec({Author: {"name": Override("First")}})
+        spec2 = GraphSpec({Author: {"name": Override("Second")}})
+        merged = spec1 | spec2
+        overrides = merged.get_overrides(Author)
+        assert isinstance(overrides["name"], Override)
+        assert overrides["name"].resolve(None, {}) == "Second"
+
+    def test_spec_or_preserves_originals(self):
+        """Merging specs does not mutate the originals."""
+        spec1 = GraphSpec({Author: {"name": Override("A")}})
+        spec2 = GraphSpec({Author: {"email": Override("b@b.com")}})
+        _ = spec1 | spec2
+        # Originals unchanged
+        assert "email" not in spec1.get_overrides(Author)
+        assert "name" not in spec2.get_overrides(Author)
