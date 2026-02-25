@@ -217,7 +217,6 @@ class TestExportWithAnonymization:
 
     @pytest.mark.django_db(databases=["default", "secondary"], transaction=True)
     def test_anonymize_database_export(self, author):
-
         spec = GraphSpec(Author)
         result = GraphWalker(spec).walk(author)
 

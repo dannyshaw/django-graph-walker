@@ -42,6 +42,7 @@ dev = [
     "graphviz",
     "faker",
     "ruff",
+    "pre-commit",
 ]
 
 [tool.hatch.build.targets.wheel]
