@@ -236,6 +236,10 @@ graph.render("instances", format="svg")
 
 See [`examples/bookstore/`](examples/bookstore/) for a working example project that demonstrates walking a bookstore data model, exporting to JSON fixtures, and generating interactive graph visualizations.
 
+## Acknowledgements
+
+This project was inspired by an internal clone tool built by [@MattFisher](https://github.com/MattFisher) at [Edrolo](https://edrolo.com.au), which pioneered the idea of spec-driven Django model graph traversal.
+
 ## License
 
 MIT
