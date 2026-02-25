@@ -1,5 +1,7 @@
 """Tests for GraphWalker and WalkResult."""
 
+import pytest
+
 from django_graph_walker import Follow, GraphSpec, GraphWalker, Ignore
 from tests.testapp.models import (
     Article,
@@ -147,48 +149,56 @@ class TestGraphWalkerGenericFK:
 
 
 class TestGraphWalkerDefaultFollowBehavior:
-    """Verify that forward edges are NOT followed by default."""
+    """Verify that all in-scope edges are followed by default."""
 
-    def test_forward_fk_not_followed_by_default(self, article, author):
-        """Article→Author forward FK should not be followed without explicit Follow."""
+    def test_forward_fk_followed_by_default(self, article, author):
+        """Article→Author forward FK should be followed when both are in scope."""
         spec = GraphSpec(Article, Author, Category)
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert author in result
+
+    def test_forward_m2m_followed_by_default(self, article, tag_python, tag_django):
+        """Article→Tag forward M2M should be followed when both are in scope."""
+        spec = GraphSpec(Article, Tag, Author, Category)
+        result = GraphWalker(spec).walk(article)
+        assert article in result
+        assert tag_python in result
+        assert tag_django in result
+
+    def test_forward_o2o_followed_by_default(self, article_stats, article):
+        """ArticleStats→Article forward O2O should be followed when both are in scope."""
+        spec = GraphSpec(ArticleStats, Article, Author, Category)
+        result = GraphWalker(spec).walk(article_stats)
+        assert article_stats in result
+        assert article in result
+
+    def test_reverse_m2m_followed_by_default(self, tag_python, article):
+        """Tag→Article reverse M2M should be followed when both are in scope."""
+        spec = GraphSpec(Tag, Article, Author, Category)
+        result = GraphWalker(spec).walk(tag_python)
+        assert tag_python in result
+        assert article in result
+
+    def test_forward_fk_not_followed_out_of_scope(self, article, author):
+        """Article→Author forward FK should NOT be followed when Author is not in scope."""
+        spec = GraphSpec(Article, Category)
         result = GraphWalker(spec).walk(article)
         assert article in result
         assert author not in result
 
-    def test_forward_m2m_not_followed_by_default(self, article, tag_python, tag_django):
-        """Article→Tag forward M2M should not be followed without explicit Follow."""
-        spec = GraphSpec(Article, Tag, Author, Category)
-        result = GraphWalker(spec).walk(article)
-        assert article in result
-        assert tag_python not in result
-        assert tag_django not in result
-
-    def test_forward_o2o_not_followed_by_default(self, article_stats, article):
-        """ArticleStats→Article forward O2O should not be followed without explicit Follow."""
-        spec = GraphSpec(ArticleStats, Article, Author, Category)
-        result = GraphWalker(spec).walk(article_stats)
-        assert article_stats in result
-        assert article not in result
-
-    def test_reverse_m2m_not_followed_by_default(self, tag_python, article):
-        """Tag→Article reverse M2M should not be followed without explicit Follow."""
-        spec = GraphSpec(Tag, Article, Author, Category)
-        result = GraphWalker(spec).walk(tag_python)
-        assert tag_python in result
-        assert article not in result
-
-    def test_explicit_follow_overrides_default_ignore(self, article, author):
-        """Follow() on a forward FK should force traversal."""
+    def test_ignore_overrides_default_follow(self, article, author):
+        """Ignore() on a forward FK should prevent traversal."""
         spec = GraphSpec(
             {
-                Article: {"author": Follow()},
+                Article: {"author": Ignore()},
                 Author: {},
+                Category: {},
             }
         )
         result = GraphWalker(spec).walk(article)
         assert article in result
-        assert author in result
+        assert author not in result
 
 
 class TestGraphWalkerFiltering:
@@ -452,3 +462,266 @@ class TestWalkResultComposition:
         assert a in merged
         assert cat in merged
         assert merged.instance_count == 2
+
+
+class TestBatchPrefetch:
+    def test_batch_prefetch_reduces_queries(self, db, django_assert_num_queries):
+        """Query count should be O(edge types) not O(instances)."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+
+        # Create 10 articles under the same author
+        articles = []
+        for i in range(10):
+            articles.append(
+                Article.objects.create(
+                    title=f"Article {i}",
+                    body="body",
+                    author=author,
+                    category=cat,
+                    published=True,
+                )
+            )
+
+        spec = GraphSpec(
+            {
+                Author: {},
+                Article: {"author": Follow(), "category": Follow()},
+                Category: {},
+            }
+        )
+
+        # Walking from author should find all 10 articles.
+        # With batch prefetch, the BFS level that processes Author will
+        # prefetch reverse FKs in bulk, then the Article level prefetches
+        # forward FKs in bulk. Without batch prefetch each article would
+        # trigger separate FK loads.
+        # Expected queries:
+        #   1. prefetch articles for Author batch (reverse FK)
+        #   2. prefetch reviewed_articles for Author batch (reverse FK)
+        #   3. prefetch category for Article batch (forward FK via Follow)
+        #   4. prefetch children for Category batch (reverse self-FK)
+        #   5. prefetch articles for Category batch (reverse FK)
+        # Key: 5 queries for 10 articles, not 10+ individual FK loads
+        with django_assert_num_queries(5):
+            result = GraphWalker(spec).walk(author)
+
+        assert result.instance_count == 12  # 1 author + 10 articles + 1 category
+
+    def test_follow_prefetch_applied_at_batch_level(self, db):
+        """Follow(prefetch=...) should be applied via Prefetch object at batch level."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+
+        # Create articles with specific titles to verify ordering from prefetch
+        for title in ["Zebra", "Apple", "Mango"]:
+            Article.objects.create(
+                title=title, body="body", author=author, category=cat, published=True
+            )
+
+        spec = GraphSpec(
+            {
+                Author: {
+                    "articles": Follow(prefetch=lambda qs: qs.order_by("title")),
+                },
+                Article: {},
+                Category: {},
+            }
+        )
+        result = GraphWalker(spec).walk(author)
+        # All 3 articles collected
+        result_articles = result.instances_of(Article)
+        assert len(result_articles) == 3
+        titles = {a.title for a in result_articles}
+        assert titles == {"Zebra", "Apple", "Mango"}
+
+    def test_filter_still_works_with_batch_prefetch(self, db, django_assert_num_queries):
+        """Filters should still exclude instances even after batch prefetch caches data."""
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        cat = Category.objects.create(name="Root")
+
+        kept = Article.objects.create(
+            title="Keep Me", body="body", author=author, category=cat, published=True
+        )
+        skipped = Article.objects.create(
+            title="Skip Me", body="body", author=author, category=cat, published=True
+        )
+
+        # Only Author→articles edge, Category not in scope so no alternate path
+        spec = GraphSpec(
+            {
+                Author: {
+                    "articles": Follow(filter=lambda ctx, instance: instance.title == "Keep Me"),
+                },
+                Article: {},
+            }
+        )
+        result = GraphWalker(spec).walk(author)
+        assert kept in result
+        assert skipped not in result
+
+    def test_batch_prefetch_with_empty_relations(self, db):
+        """Instances with no related objects should not cause errors during prefetch."""
+        author = Author.objects.create(name="Lonely", email="lonely@test.com")
+
+        spec = GraphSpec(Author, Article, Category)
+        result = GraphWalker(spec).walk(author)
+        assert result.instance_count == 1
+        assert author in result
+
+    @pytest.mark.parametrize("num_roots", [1, 5])
+    def test_batch_prefetch_with_multiple_roots(self, db, num_roots):
+        """Multiple root instances of the same model should be batched together."""
+        cat = Category.objects.create(name="Root")
+        authors = []
+        for i in range(num_roots):
+            a = Author.objects.create(name=f"Author {i}", email=f"a{i}@test.com")
+            Article.objects.create(
+                title=f"Article by {i}",
+                body="body",
+                author=a,
+                category=cat,
+                published=True,
+            )
+            authors.append(a)
+
+        spec = GraphSpec(Author, Article, Category)
+        result = GraphWalker(spec).walk(*authors)
+        # Each author has 1 article, plus 1 shared category
+        assert result.instance_count == num_roots * 2 + 1
+
+
+class TestFollowLimit:
+    def test_limit_caps_reverse_fk(self, db):
+        """Follow(limit=N) should cap the number of related instances per parent."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        for i in range(10):
+            Article.objects.create(
+                title=f"Article {i}",
+                body="body",
+                author=author,
+                category=cat,
+                published=True,
+            )
+
+        spec = GraphSpec(
+            {
+                Author: {"articles": Follow(limit=3)},
+                Article: {},
+            }
+        )
+        result = GraphWalker(spec).walk(author)
+        articles = result.instances_of(Article)
+        assert len(articles) == 3
+
+    def test_limit_caps_forward_m2m(self, db):
+        """Follow(limit=N) on forward M2M should cap tags per article."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        article = Article.objects.create(
+            title="Test", body="body", author=author, category=cat, published=True
+        )
+        for i in range(5):
+            tag = Tag.objects.create(name=f"tag-{i}")
+            article.tags.add(tag)
+
+        spec = GraphSpec(
+            {
+                Article: {"tags": Follow(limit=2)},
+                Tag: {},
+            }
+        )
+        result = GraphWalker(spec).walk(article)
+        tags = result.instances_of(Tag)
+        assert len(tags) == 2
+
+    def test_limit_applied_after_filter(self, db):
+        """Limit should apply after filter, not before."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        for i in range(10):
+            Article.objects.create(
+                title=f"Article {i}",
+                body="body",
+                author=author,
+                category=cat,
+                published=(i % 2 == 0),  # 5 published, 5 not
+            )
+
+        spec = GraphSpec(
+            {
+                Author: {
+                    "articles": Follow(
+                        filter=lambda ctx, instance: instance.published,
+                        limit=3,
+                    ),
+                },
+                Article: {},
+            }
+        )
+        result = GraphWalker(spec).walk(author)
+        articles = result.instances_of(Article)
+        # 5 pass filter, limit caps to 3
+        assert len(articles) == 3
+        assert all(a.published for a in articles)
+
+    def test_limit_per_parent_not_global(self, db):
+        """Each parent instance gets its own limit independently."""
+        cat = Category.objects.create(name="Root")
+        a1 = Author.objects.create(name="Alice", email="a@a.com")
+        a2 = Author.objects.create(name="Bob", email="b@b.com")
+        for i in range(5):
+            Article.objects.create(
+                title=f"A1-{i}", body="body", author=a1, category=cat, published=True
+            )
+            Article.objects.create(
+                title=f"A2-{i}", body="body", author=a2, category=cat, published=True
+            )
+
+        spec = GraphSpec(
+            {
+                Author: {"articles": Follow(limit=2)},
+                Article: {},
+            }
+        )
+        result = GraphWalker(spec).walk(a1, a2)
+        articles = result.instances_of(Article)
+        # 2 per author = 4 total
+        assert len(articles) == 4
+
+    def test_limit_without_follow_override(self, db):
+        """Limit only works via Follow() — default edges have no limit."""
+        cat = Category.objects.create(name="Root")
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        for i in range(5):
+            Article.objects.create(
+                title=f"Article {i}",
+                body="body",
+                author=author,
+                category=cat,
+                published=True,
+            )
+
+        # No Follow override — default follow, no limit
+        spec = GraphSpec(Author, Article, Category)
+        result = GraphWalker(spec).walk(author)
+        articles = result.instances_of(Article)
+        assert len(articles) == 5
+
+    def test_limit_zero_blocks_all(self, db):
+        """Follow(limit=0) should effectively block all related instances."""
+        author = Author.objects.create(name="Alice", email="a@a.com")
+        cat = Category.objects.create(name="Root")
+        Article.objects.create(
+            title="Test", body="body", author=author, category=cat, published=True
+        )
+
+        spec = GraphSpec(
+            {
+                Author: {"articles": Follow(limit=0)},
+                Article: {},
+            }
+        )
+        result = GraphWalker(spec).walk(author)
+        assert result.instances_of(Article) == []

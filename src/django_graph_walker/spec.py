@@ -18,6 +18,8 @@ class Follow(_FieldOverride):
         filter: Optional callable (ctx, instance) -> bool to filter which related instances
             are followed during walking.
         prefetch: Optional callable (queryset) -> queryset to add select_related/prefetch_related.
+        limit: Optional int to cap how many related instances are followed per parent.
+            Applied after filter. Respects queryset ordering.
     """
 
     def __init__(
@@ -25,9 +27,11 @@ class Follow(_FieldOverride):
         *,
         filter: Optional[Callable[..., bool]] = None,
         prefetch: Optional[Callable[[QuerySet], QuerySet]] = None,
+        limit: Optional[int] = None,
     ):
         self.filter = filter
         self.prefetch = prefetch
+        self.limit = limit
 
 
 class Ignore(_FieldOverride):

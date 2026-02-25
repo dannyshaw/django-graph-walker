@@ -211,7 +211,7 @@ class Export:
             if fi.field_class == FieldClass.PK:
                 continue
 
-            # Skip reverse relations and M2M (handled separately)
+            # Reverse relations and M2M handled in second pass
             if fi.field_class in (
                 FieldClass.REVERSE_FK_IN_SCOPE,
                 FieldClass.REVERSE_FK_OUT_OF_SCOPE,
@@ -226,7 +226,6 @@ class Export:
             ):
                 continue
 
-            # Check for anonymization
             anon_key = f"{model.__name__}.{fi.name}"
             if anon_key in self.anonymizers:
                 value = self._resolve_anonymizer(anon_key, instance, ctx)
@@ -290,11 +289,10 @@ class Export:
                         new_pks.append(new_pk)
 
                 if new_pks:
-                    # Use the target DB for the M2M relationship
                     new_manager.set(new_pks)
 
             elif fi.field_class == FieldClass.M2M_OUT_OF_SCOPE:
-                # Skip — out-of-scope M2M targets may not exist in target DB.
+                # Out-of-scope M2M targets may not exist in target DB
                 pass
 
     def _get_ordered_instances(self, walk_result: WalkResult) -> list[models.Model]:

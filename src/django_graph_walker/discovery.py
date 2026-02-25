@@ -79,60 +79,53 @@ def classify_field(field: Field, in_scope: set[type[Model]]) -> FieldClass:
     Returns:
         FieldClass indicating the field's role in graph traversal.
     """
-    # Primary key
     if hasattr(field, "primary_key") and field.primary_key:
         return FieldClass.PK
 
-    # GenericRelation (must check before ForeignObjectRel since it's not a subclass of it)
+    # Must check before ForeignObjectRel
     if isinstance(field, GenericRelation):
         related = field.related_model
         if related in in_scope:
             return FieldClass.GENERIC_RELATION_IN_SCOPE
         return FieldClass.GENERIC_RELATION_OUT_OF_SCOPE
 
-    # Reverse OneToOne
     if isinstance(field, OneToOneRel):
         related = field.related_model
         if related in in_scope:
             return FieldClass.REVERSE_O2O_IN_SCOPE
         return FieldClass.REVERSE_O2O_OUT_OF_SCOPE
 
-    # Reverse M2M
     if isinstance(field, ManyToManyRel):
         related = field.related_model
         if related in in_scope:
             return FieldClass.REVERSE_M2M_IN_SCOPE
         return FieldClass.REVERSE_M2M_OUT_OF_SCOPE
 
-    # Reverse FK (ManyToOneRel)
     if isinstance(field, ManyToOneRel):
         related = field.related_model
         if related in in_scope:
             return FieldClass.REVERSE_FK_IN_SCOPE
         return FieldClass.REVERSE_FK_OUT_OF_SCOPE
 
-    # Forward OneToOne
     if isinstance(field, OneToOneField):
         related = field.related_model
         if related in in_scope:
             return FieldClass.O2O_IN_SCOPE
         return FieldClass.O2O_OUT_OF_SCOPE
 
-    # Forward FK
     if isinstance(field, ForeignKey):
         related = field.related_model
         if related in in_scope:
             return FieldClass.FK_IN_SCOPE
         return FieldClass.FK_OUT_OF_SCOPE
 
-    # Forward M2M
     if isinstance(field, ManyToManyField):
         related = field.related_model
         if related in in_scope:
             return FieldClass.M2M_IN_SCOPE
         return FieldClass.M2M_OUT_OF_SCOPE
 
-    # Everything else is a simple value field
+    # Catch-all: simple value field
     return FieldClass.VALUE
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Iterator
 
 from django.db.models import Model
@@ -61,7 +61,6 @@ class WalkResult:
         if not models_in_result:
             return []
 
-        # Build dependency graph
         deps: dict[type[Model], set[type[Model]]] = {m: set() for m in models_in_result}
         for model_cls in models_in_result:
             for fi in get_model_fields(model_cls, in_scope=models_in_result):
@@ -71,17 +70,6 @@ class WalkResult:
                         deps[model_cls].add(target)
 
         # Kahn's algorithm for topological sort
-        in_degree: dict[type[Model], int] = {m: 0 for m in models_in_result}
-        for model_cls, model_deps in deps.items():
-            for dep in model_deps:
-                in_degree[model_cls] += 1
-
-        # Hmm, in_degree should be: for each model, count how many models depend on it
-        # Actually no — in_degree[X] = number of models X depends on. We want:
-        # X comes after all its dependencies. So we use: start with models that have 0 deps.
-        from collections import deque
-
-        # Recalculate: in_degree[X] = number of dependencies of X
         in_degree = {m: len(deps[m]) for m in models_in_result}
         queue = deque(m for m in models_in_result if in_degree[m] == 0)
         result = []
