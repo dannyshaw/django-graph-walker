@@ -12,6 +12,25 @@ python manage.py migrate
 
 ## Usage
 
+### Management commands (no Python needed)
+
+```bash
+# Visualize the books app schema
+python manage.py graph_schema books
+
+# Walk from a Book and see stats
+python manage.py graph_walk books.Book 1 --dry-run
+
+# Walk and export to fixture
+python manage.py graph_walk books.Book 1 -o output/fixture.json
+
+# Dependency analysis
+python manage.py graph_deps books.Book
+python manage.py graph_deps books --tree
+```
+
+### Python scripts
+
 ```bash
 # Generate sample data
 python scripts/generate_data.py

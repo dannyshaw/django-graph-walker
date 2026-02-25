@@ -11,6 +11,7 @@ DEBUG = True
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django_graph_walker",
     "books",
 ]
 

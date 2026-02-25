@@ -81,11 +81,27 @@ spec = GraphSpec(
 )
 ```
 
+**Auto-generate from apps** -- no need to list models manually:
+
+```python
+# All models in one app
+spec = GraphSpec.from_app("books")
+
+# Multiple apps
+spec = GraphSpec.from_apps("books", "reviews")
+
+# All models (excludes django.contrib.* by default)
+spec = GraphSpec.all()
+
+# Remove specific models
+spec = GraphSpec.from_app("books").exclude(Review)
+```
+
 **Composition with `|`** -- merge two specs, with the right-hand side winning on conflicts:
 
 ```python
-base = GraphSpec(Author, Article, Tag)
-overrides = GraphSpec({Article: {"reviewer": Ignore()}})
+base = GraphSpec.from_app("books")
+overrides = GraphSpec({Author: {"email": Anonymize("email")}})
 combined = base | overrides
 ```
 
@@ -230,6 +246,88 @@ graph.render("schema", format="png")
 
 graph = viz.instances_to_graphviz(result)
 graph.render("instances", format="svg")
+```
+
+## Management Commands
+
+Add `"django_graph_walker"` to `INSTALLED_APPS` to enable management commands:
+
+### `graph_schema` -- Visualize model relationships
+
+```bash
+# Single app
+python manage.py graph_schema books
+
+# Multiple apps
+python manage.py graph_schema books reviews
+
+# All apps
+python manage.py graph_schema --all
+
+# Output to file
+python manage.py graph_schema books -o schema.dot
+
+# Render to image (requires pip install django-graph-walker[viz])
+python manage.py graph_schema books --format=png -o schema.png
+
+# Machine-readable JSON
+python manage.py graph_schema books --format=json
+
+# Exclude specific models
+python manage.py graph_schema books --exclude=books.Review
+
+# Hide field names on edges
+python manage.py graph_schema books --no-field-names
+```
+
+### `graph_walk` -- Walk and export from the CLI
+
+```bash
+# Walk from a root instance, print stats
+python manage.py graph_walk books.Book 42
+
+# Export to JSON fixture
+python manage.py graph_walk books.Book 42 -o fixture.json
+
+# Multiple root PKs
+python manage.py graph_walk books.Book 1,2,3
+
+# Explicit app scope (default: root model's app)
+python manage.py graph_walk books.Book 42 --apps=books,reviews
+
+# All apps in scope
+python manage.py graph_walk books.Book 42 --all
+
+# Stats only, no export
+python manage.py graph_walk books.Book 42 --dry-run
+```
+
+### `graph_deps` -- Dependency analysis
+
+```bash
+# What depends on Book + what Book depends on
+python manage.py graph_deps books.Book
+
+# Full dependency tree for an app
+python manage.py graph_deps books --tree
+
+# Models with no relationships
+python manage.py graph_deps books --orphans
+
+# Machine-readable JSON
+python manage.py graph_deps books.Book --format=json
+```
+
+## Settings
+
+Optional configuration via `GRAPH_WALKER` in your Django settings:
+
+```python
+GRAPH_WALKER = {
+    # Apps excluded by GraphSpec.all() and --all flag
+    # Default: all django.contrib.* apps
+    "EXCLUDE_APPS": ["django.contrib.admin", "django.contrib.auth", ...],
+}
 ```
 
 ## Examples
