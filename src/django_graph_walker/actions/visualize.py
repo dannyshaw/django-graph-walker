@@ -43,13 +43,13 @@ class Visualize:
     """Generate Graphviz DOT visualizations of model graphs.
 
     Usage:
-        spec = GraphSpec(Author, Article, Category)
+        spec = GraphSpec(Author, Book, Publisher)
 
         # Schema-level (no DB needed)
         dot_string = Visualize().schema(spec)
 
         # Instance-level (after walking)
-        result = GraphWalker(spec).walk(article)
+        result = GraphWalker(spec).walk(book)
         dot_string = Visualize().instances(result)
 
         # If graphviz package is installed, get a Digraph object

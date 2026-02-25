@@ -51,8 +51,8 @@ class GraphWalker:
     all reachable in-scope instances.
 
     Usage:
-        spec = GraphSpec(Author, Article, Category)
-        result = GraphWalker(spec).walk(some_article)
+        spec = GraphSpec(Author, Book, Publisher)
+        result = GraphWalker(spec).walk(some_book)
         print(result.instance_count)
     """
 

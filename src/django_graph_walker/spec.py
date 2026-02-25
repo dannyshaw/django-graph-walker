@@ -86,22 +86,22 @@ class GraphSpec:
 
     Usage:
         # Simple — just list models, all defaults
-        GraphSpec(Branch, Lesson, Chunk)
+        GraphSpec(Author, Book, Publisher)
 
         # With field overrides
         GraphSpec({
-            Branch: {
-                'title': Override(lambda m, ctx: ctx['new_title']),
+            Author: {
+                'name': Override(lambda m, ctx: ctx['new_name']),
             },
-            Lesson: {},
-            Chunk: {},
+            Book: {},
+            Publisher: {},
         })
 
         # Mixed
         GraphSpec(
-            {Branch: {'title': Override(...)}},
-            Lesson,
-            Chunk,
+            {Author: {'name': Override(...)}},
+            Book,
+            Publisher,
         )
     """
 
