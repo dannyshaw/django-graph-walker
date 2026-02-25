@@ -148,6 +148,88 @@ class GraphSpec:
         """Get field overrides for a model."""
         return self._models.get(model, {})
 
+    @classmethod
+    def from_app(cls, app_label: str) -> GraphSpec:
+        """Create a GraphSpec containing all models from a single Django app.
+
+        Args:
+            app_label: The app label (e.g. "books").
+
+        Usage:
+            spec = GraphSpec.from_app("books")
+        """
+        from django.apps import apps
+
+        app_config = apps.get_app_config(app_label)
+        models = app_config.get_models()
+        spec = cls()
+        for model in models:
+            spec._models[model] = {}
+        return spec
+
+    @classmethod
+    def from_apps(cls, *app_labels: str) -> GraphSpec:
+        """Create a GraphSpec containing all models from multiple Django apps.
+
+        Args:
+            *app_labels: One or more app labels (e.g. "books", "reviews").
+
+        Usage:
+            spec = GraphSpec.from_apps("books", "reviews")
+        """
+        from django.apps import apps
+
+        spec = cls()
+        for app_label in app_labels:
+            app_config = apps.get_app_config(app_label)
+            for model in app_config.get_models():
+                if model not in spec._models:
+                    spec._models[model] = {}
+        return spec
+
+    @classmethod
+    def all(cls, exclude_apps: list[str] | None = None) -> GraphSpec:
+        """Create a GraphSpec containing all registered Django models.
+
+        By default, excludes Django contrib apps (auth, admin, contenttypes, etc.).
+        Override via exclude_apps or the GRAPH_WALKER["EXCLUDE_APPS"] setting.
+
+        Args:
+            exclude_apps: App labels to exclude. If None, uses the default exclude list
+                from settings.
+
+        Usage:
+            spec = GraphSpec.all()
+            spec = GraphSpec.all(exclude_apps=["django.contrib.admin"])
+        """
+        from django.apps import apps
+
+        from django_graph_walker.conf import get_setting
+
+        if exclude_apps is None:
+            exclude_apps = get_setting("EXCLUDE_APPS")
+
+        excluded = set(exclude_apps)
+        spec = cls()
+        for model in apps.get_models():
+            app_label = model._meta.app_label
+            app_name = model._meta.app_config.name if model._meta.app_config else app_label
+            if app_name not in excluded and app_label not in excluded:
+                spec._models[model] = {}
+        return spec
+
+    def exclude(self, *models: type[Model]) -> GraphSpec:
+        """Return a new GraphSpec with the given models removed.
+
+        Usage:
+            spec = GraphSpec.from_app("books").exclude(Review)
+        """
+        result = GraphSpec()
+        for model, overrides in self._models.items():
+            if model not in models:
+                result._models[model] = dict(overrides)
+        return result
+
     def validate(self) -> None:
         """Validate that all overrides reference real fields on their models."""
         from django_graph_walker.discovery import _get_field_name

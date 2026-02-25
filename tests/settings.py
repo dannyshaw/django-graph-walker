@@ -14,6 +14,7 @@ DATABASES = {
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django_graph_walker",
     "tests.testapp",
 ]
 
