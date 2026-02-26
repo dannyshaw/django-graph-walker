@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from django.db.models import Model
 
-from django_graph_walker.discovery import FieldClass, FieldInfo, get_model_fields
+from django_graph_walker.discovery import (
+    FORWARD_IN_SCOPE,
+    FORWARD_RELATION_IN_SCOPE,
+    FieldClass,
+    FieldInfo,
+    get_model_fields,
+)
 from django_graph_walker.result import WalkResult
 from django_graph_walker.spec import GraphSpec
 
@@ -108,19 +112,14 @@ class Visualize:
         model: type[Model],
         fi: FieldInfo,
         spec: GraphSpec,
-    ) -> Optional[tuple[str, str, str, dict[str, str]]]:
+    ) -> tuple[str, str, str, dict[str, str]] | None:
         """Determine if a field should produce an edge in the schema graph.
 
         Returns (source_name, target_name, label, style_attrs) or None.
         Only produces edges for forward FK, O2O, M2M, and GenericRelation
         to avoid drawing each relationship twice.
         """
-        if fi.field_class not in (
-            FieldClass.FK_IN_SCOPE,
-            FieldClass.O2O_IN_SCOPE,
-            FieldClass.M2M_IN_SCOPE,
-            FieldClass.GENERIC_RELATION_IN_SCOPE,
-        ):
+        if fi.field_class not in FORWARD_IN_SCOPE:
             return None
 
         target_model = fi.related_model
@@ -162,11 +161,7 @@ class Visualize:
         for model in models:
             fields = get_model_fields(model, in_scope=in_scope)
             for fi in fields:
-                if fi.field_class not in (
-                    FieldClass.FK_IN_SCOPE,
-                    FieldClass.O2O_IN_SCOPE,
-                    FieldClass.M2M_IN_SCOPE,
-                ):
+                if fi.field_class not in FORWARD_RELATION_IN_SCOPE:
                     continue
 
                 for instance in by_model[model]:
@@ -274,11 +269,7 @@ class Visualize:
         for model in models:
             fields = get_model_fields(model, in_scope=in_scope)
             for fi in fields:
-                if fi.field_class not in (
-                    FieldClass.FK_IN_SCOPE,
-                    FieldClass.O2O_IN_SCOPE,
-                    FieldClass.M2M_IN_SCOPE,
-                ):
+                if fi.field_class not in FORWARD_RELATION_IN_SCOPE:
                     continue
                 for instance in by_model[model]:
                     targets = self._get_instance_targets(instance, fi)

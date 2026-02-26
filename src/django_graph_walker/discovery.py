@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional
 
 from django.contrib.contenttypes.fields import GenericRelation
 from django.db.models import Field, ForeignKey, ManyToManyField, ManyToManyRel, Model
@@ -47,7 +46,7 @@ class FieldInfo:
     name: str
     field: Field
     field_class: FieldClass
-    related_model: Optional[type[Model]] = None
+    related_model: type[Model] | None = None
 
 
 def _get_field_name(field: Field) -> str:
@@ -57,7 +56,7 @@ def _get_field_name(field: Field) -> str:
     return field.name
 
 
-def _get_related_model(field: Field) -> Optional[type[Model]]:
+def _get_related_model(field: Field) -> type[Model] | None:
     """Get the model a relationship field points to."""
     if isinstance(field, GenericRelation):
         return field.related_model
@@ -138,9 +137,42 @@ def classify_field(field: Field, in_scope: set[type[Model]]) -> FieldClass:
     return FieldClass.VALUE
 
 
+# All in-scope edge types that are traversable by the walker
+ALL_IN_SCOPE = frozenset(
+    {
+        FieldClass.FK_IN_SCOPE,
+        FieldClass.M2M_IN_SCOPE,
+        FieldClass.REVERSE_FK_IN_SCOPE,
+        FieldClass.REVERSE_M2M_IN_SCOPE,
+        FieldClass.O2O_IN_SCOPE,
+        FieldClass.REVERSE_O2O_IN_SCOPE,
+        FieldClass.GENERIC_RELATION_IN_SCOPE,
+    }
+)
+
+# Forward in-scope edges (used to avoid drawing each relationship twice in visualization)
+FORWARD_IN_SCOPE = frozenset(
+    {
+        FieldClass.FK_IN_SCOPE,
+        FieldClass.O2O_IN_SCOPE,
+        FieldClass.M2M_IN_SCOPE,
+        FieldClass.GENERIC_RELATION_IN_SCOPE,
+    }
+)
+
+# Forward in-scope edges that can be resolved via getattr (excludes GenericRelation)
+FORWARD_RELATION_IN_SCOPE = frozenset(
+    {
+        FieldClass.FK_IN_SCOPE,
+        FieldClass.O2O_IN_SCOPE,
+        FieldClass.M2M_IN_SCOPE,
+    }
+)
+
+
 def get_model_fields(
     model: type[Model],
-    in_scope: Optional[set[type[Model]]] = None,
+    in_scope: set[type[Model]] | None = None,
 ) -> list[FieldInfo]:
     """Introspect a Django model and return classified FieldInfo for all fields.
 

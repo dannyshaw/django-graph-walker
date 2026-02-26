@@ -7,19 +7,8 @@ from dataclasses import dataclass
 
 from django.db.models import Model
 
-from django_graph_walker.discovery import FieldClass, get_model_fields
+from django_graph_walker.discovery import ALL_IN_SCOPE, FieldClass, get_model_fields
 from django_graph_walker.spec import Follow, GraphSpec, Ignore
-
-# Edge types that the walker follows by default (all in-scope edges)
-_ALL_IN_SCOPE = {
-    FieldClass.FK_IN_SCOPE,
-    FieldClass.M2M_IN_SCOPE,
-    FieldClass.REVERSE_FK_IN_SCOPE,
-    FieldClass.REVERSE_M2M_IN_SCOPE,
-    FieldClass.O2O_IN_SCOPE,
-    FieldClass.REVERSE_O2O_IN_SCOPE,
-    FieldClass.GENERIC_RELATION_IN_SCOPE,
-}
 
 _REVERSE_EDGE_TYPES = {
     FieldClass.REVERSE_FK_IN_SCOPE,
@@ -148,7 +137,7 @@ class FanoutAnalyzer:
             fields = get_model_fields(model, in_scope=self.spec.models)
 
             for fi in fields:
-                if fi.field_class not in _ALL_IN_SCOPE:
+                if fi.field_class not in ALL_IN_SCOPE:
                     continue
                 if fi.related_model is None:
                     continue

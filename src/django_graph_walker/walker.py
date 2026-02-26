@@ -4,44 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
-from typing import Any, Optional, Union
+from typing import Any
 
 from django.db.models import Model, Prefetch, prefetch_related_objects
 
-from django_graph_walker.discovery import FieldClass, FieldInfo, get_model_fields
+from django_graph_walker.discovery import ALL_IN_SCOPE, FieldClass, FieldInfo, get_model_fields
 from django_graph_walker.result import WalkResult
 from django_graph_walker.spec import Follow, GraphSpec, Ignore
 
 logger = logging.getLogger(__name__)
-
-
-# All traversable in-scope edge types
-_ALL_IN_SCOPE = {
-    FieldClass.FK_IN_SCOPE,
-    FieldClass.M2M_IN_SCOPE,
-    FieldClass.REVERSE_FK_IN_SCOPE,
-    FieldClass.REVERSE_M2M_IN_SCOPE,
-    FieldClass.O2O_IN_SCOPE,
-    FieldClass.REVERSE_O2O_IN_SCOPE,
-    FieldClass.GENERIC_RELATION_IN_SCOPE,
-}
-
-# Default: follow all in-scope edges regardless of direction.
-# FK direction is an implementation detail — for graph walking, if both models
-# are in scope the edge should be traversed. Use Ignore() to opt out.
-_DEFAULT_FOLLOW = _ALL_IN_SCOPE
-
-_DEFAULT_IGNORE = {
-    FieldClass.PK,
-    FieldClass.VALUE,
-    FieldClass.FK_OUT_OF_SCOPE,
-    FieldClass.M2M_OUT_OF_SCOPE,
-    FieldClass.REVERSE_FK_OUT_OF_SCOPE,
-    FieldClass.REVERSE_M2M_OUT_OF_SCOPE,
-    FieldClass.O2O_OUT_OF_SCOPE,
-    FieldClass.REVERSE_O2O_OUT_OF_SCOPE,
-    FieldClass.GENERIC_RELATION_OUT_OF_SCOPE,
-}
 
 
 class GraphWalker:
@@ -59,7 +30,7 @@ class GraphWalker:
     def __init__(self, spec: GraphSpec):
         self.spec = spec
         self._field_cache: dict[type[Model], list[FieldInfo]] = {}
-        self._prefetch_cache: dict[type[Model], list[Union[str, Prefetch]]] = {}
+        self._prefetch_cache: dict[type[Model], list[str | Prefetch]] = {}
 
     def _get_fields(self, model: type[Model]) -> list[FieldInfo]:
         """Get classified fields for a model (cached)."""
@@ -67,50 +38,29 @@ class GraphWalker:
             self._field_cache[model] = get_model_fields(model, in_scope=self.spec.models)
         return self._field_cache[model]
 
+    def _get_follow(self, model: type[Model], field_info: FieldInfo) -> Follow | None:
+        """Get the Follow override for an edge, if any."""
+        override = self.spec.get_overrides(model).get(field_info.name)
+        return override if isinstance(override, Follow) else None
+
     def _should_follow(self, model: type[Model], field_info: FieldInfo) -> bool:
-        """Determine if an edge should be followed, considering overrides."""
-        overrides = self.spec.get_overrides(model)
+        """Determine if an edge should be followed, considering overrides.
 
-        if field_info.name in overrides:
-            override = overrides[field_info.name]
-            if isinstance(override, Ignore):
-                return False
-            if isinstance(override, Follow):
-                # Follow override enables traversal on any in-scope edge
-                return field_info.field_class in _ALL_IN_SCOPE
-            # Other overrides (Override, KeepOriginal, Anonymize) don't affect traversal
-            return field_info.field_class in _DEFAULT_FOLLOW
+        Default: follow all in-scope edges regardless of direction.
+        FK direction is an implementation detail — for graph walking, if both models
+        are in scope the edge should be traversed. Use Ignore() to opt out.
+        """
+        override = self.spec.get_overrides(model).get(field_info.name)
 
-        return field_info.field_class in _DEFAULT_FOLLOW
+        if isinstance(override, Ignore):
+            return False
+        if isinstance(override, Follow):
+            # Follow override enables traversal on any in-scope edge
+            return field_info.field_class in ALL_IN_SCOPE
+        # Other overrides (Override, KeepOriginal, Anonymize) don't affect traversal
+        return field_info.field_class in ALL_IN_SCOPE
 
-    def _get_filter(self, model: type[Model], field_info: FieldInfo):
-        """Get the filter function for an edge, if any."""
-        overrides = self.spec.get_overrides(model)
-        if field_info.name in overrides:
-            override = overrides[field_info.name]
-            if isinstance(override, Follow) and override.filter:
-                return override.filter
-        return None
-
-    def _get_prefetch(self, model: type[Model], field_info: FieldInfo):
-        """Get the prefetch function for an edge, if any."""
-        overrides = self.spec.get_overrides(model)
-        if field_info.name in overrides:
-            override = overrides[field_info.name]
-            if isinstance(override, Follow) and override.prefetch:
-                return override.prefetch
-        return None
-
-    def _get_limit(self, model: type[Model], field_info: FieldInfo) -> Optional[int]:
-        """Get the per-parent limit for an edge, if any."""
-        overrides = self.spec.get_overrides(model)
-        if field_info.name in overrides:
-            override = overrides[field_info.name]
-            if isinstance(override, Follow) and override.limit is not None:
-                return override.limit
-        return None
-
-    def _build_prefetch_lookups(self, model: type[Model]) -> list[Union[str, Prefetch]]:
+    def _build_prefetch_lookups(self, model: type[Model]) -> list[str | Prefetch]:
         """Build prefetch lookups for all followed edges of a model.
 
         Results are cached per-model since the spec doesn't change during a walk.
@@ -118,17 +68,17 @@ class GraphWalker:
         if model in self._prefetch_cache:
             return self._prefetch_cache[model]
 
-        lookups: list[Union[str, Prefetch]] = []
+        lookups: list[str | Prefetch] = []
         for field_info in self._get_fields(model):
             if not self._should_follow(model, field_info):
                 continue
-            if field_info.field_class not in _ALL_IN_SCOPE:
+            if field_info.field_class not in ALL_IN_SCOPE:
                 continue
 
-            prefetch_fn = self._get_prefetch(model, field_info)
-            if prefetch_fn and field_info.related_model is not None:
+            follow = self._get_follow(model, field_info)
+            if follow and follow.prefetch and field_info.related_model is not None:
                 base_qs = field_info.related_model.objects.all()
-                lookups.append(Prefetch(field_info.name, queryset=prefetch_fn(base_qs)))
+                lookups.append(Prefetch(field_info.name, queryset=follow.prefetch(base_qs)))
             else:
                 lookups.append(field_info.name)
 
@@ -140,16 +90,17 @@ class GraphWalker:
         instances: list[Model],
         model: type[Model],
         field_info: FieldInfo,
-        ctx: Optional[dict[str, Any]],
+        ctx: dict[str, Any] | None,
     ) -> list[Model]:
         """Apply filter and limit to a list of related instances."""
-        filter_fn = self._get_filter(model, field_info)
-        if filter_fn:
-            instances = [i for i in instances if filter_fn(ctx or {}, i)]
+        follow = self._get_follow(model, field_info)
+        if not follow:
+            return instances
 
-        limit = self._get_limit(model, field_info)
-        if limit is not None:
-            instances = instances[:limit]
+        if follow.filter:
+            instances = [i for i in instances if follow.filter(ctx or {}, i)]
+        if follow.limit is not None:
+            instances = instances[: follow.limit]
 
         return instances
 
@@ -157,7 +108,7 @@ class GraphWalker:
         self,
         instance: Model,
         field_info: FieldInfo,
-        ctx: Optional[dict[str, Any]],
+        ctx: dict[str, Any] | None,
     ) -> list[Model]:
         """Resolve all related instances for a given edge."""
         fc = field_info.field_class
@@ -178,14 +129,14 @@ class GraphWalker:
             try:
                 related = getattr(instance, field_info.name)
                 return [related] if related is not None else []
-            except field_info.field.related_model.DoesNotExist:
+            except field_info.related_model.DoesNotExist:
                 return []
 
         if fc in (FieldClass.FK_IN_SCOPE, FieldClass.O2O_IN_SCOPE):
             related = getattr(instance, field_info.name, None)
             if related is not None:
-                filter_fn = self._get_filter(type(instance), field_info)
-                if filter_fn and not filter_fn(ctx or {}, related):
+                follow = self._get_follow(type(instance), field_info)
+                if follow and follow.filter and not follow.filter(ctx or {}, related):
                     return []
                 return [related]
             return []
@@ -200,7 +151,7 @@ class GraphWalker:
 
         return []
 
-    def walk(self, *roots: Model, ctx: Optional[dict[str, Any]] = None) -> WalkResult:
+    def walk(self, *roots: Model, ctx: dict[str, Any] | None = None) -> WalkResult:
         """Walk the model graph from one or more root instances.
 
         Uses level-order BFS with batch prefetching: each iteration drains the

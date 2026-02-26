@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 from django.core import serializers
 from django.db import models, transaction
@@ -16,7 +16,7 @@ from django_graph_walker.result import WalkResult
 logger = logging.getLogger(__name__)
 
 # Anonymizer value: either a callable (instance, ctx) -> value, or a faker provider string.
-AnonymizerValue = Union[Callable[..., Any], str]
+AnonymizerValue = Callable[..., Any] | str
 
 
 class Export:
@@ -45,7 +45,7 @@ class Export:
         *,
         format: str = "json",
         use_natural_keys: bool = False,
-        anonymizers: Optional[dict[str, AnonymizerValue]] = None,
+        anonymizers: dict[str, AnonymizerValue] | None = None,
     ):
         self.format = format
         self.use_natural_keys = use_natural_keys
@@ -91,7 +91,7 @@ class Export:
                 result[field_name] = self._resolve_anonymizer(key, instance, ctx)
         return result
 
-    def to_fixture(self, walk_result: WalkResult, ctx: Optional[dict] = None) -> str:
+    def to_fixture(self, walk_result: WalkResult, ctx: dict | None = None) -> str:
         """Serialize walk result to a JSON fixture string.
 
         Instances are ordered by dependency (FK targets before FK sources).
@@ -140,7 +140,7 @@ class Export:
         self,
         walk_result: WalkResult,
         path: str,
-        ctx: Optional[dict] = None,
+        ctx: dict | None = None,
     ) -> None:
         """Export walk result to a fixture file."""
         output = self.to_fixture(walk_result, ctx)
@@ -154,7 +154,7 @@ class Export:
         walk_result: WalkResult,
         *,
         target_db: str,
-        ctx: Optional[dict] = None,
+        ctx: dict | None = None,
     ) -> dict[tuple[type[models.Model], int], models.Model]:
         """Export walk result to another database, remapping PKs and FKs.
 
@@ -206,24 +206,19 @@ class Export:
         """Create a copy of an instance in the target database."""
         new_instance = model()
 
+        # Only copy value fields and forward FK/O2O; reverse relations, M2M,
+        # and GenericRelation are handled in the second pass or skipped.
+        _COPYABLE = {
+            FieldClass.VALUE,
+            FieldClass.FK_IN_SCOPE,
+            FieldClass.FK_OUT_OF_SCOPE,
+            FieldClass.O2O_IN_SCOPE,
+            FieldClass.O2O_OUT_OF_SCOPE,
+        }
+
         fields = get_model_fields(model, in_scope=in_scope)
         for fi in fields:
-            if fi.field_class == FieldClass.PK:
-                continue
-
-            # Reverse relations and M2M handled in second pass
-            if fi.field_class in (
-                FieldClass.REVERSE_FK_IN_SCOPE,
-                FieldClass.REVERSE_FK_OUT_OF_SCOPE,
-                FieldClass.REVERSE_O2O_IN_SCOPE,
-                FieldClass.REVERSE_O2O_OUT_OF_SCOPE,
-                FieldClass.REVERSE_M2M_IN_SCOPE,
-                FieldClass.REVERSE_M2M_OUT_OF_SCOPE,
-                FieldClass.M2M_IN_SCOPE,
-                FieldClass.M2M_OUT_OF_SCOPE,
-                FieldClass.GENERIC_RELATION_IN_SCOPE,
-                FieldClass.GENERIC_RELATION_OUT_OF_SCOPE,
-            ):
+            if fi.field_class not in _COPYABLE:
                 continue
 
             anon_key = f"{model.__name__}.{fi.name}"

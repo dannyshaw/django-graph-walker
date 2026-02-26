@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 from django.db.models import Model, QuerySet
 
@@ -25,9 +25,9 @@ class Follow(_FieldOverride):
     def __init__(
         self,
         *,
-        filter: Optional[Callable[..., bool]] = None,
-        prefetch: Optional[Callable[[QuerySet], QuerySet]] = None,
-        limit: Optional[int] = None,
+        filter: Callable[..., bool] | None = None,
+        prefetch: Callable[[QuerySet], QuerySet] | None = None,
+        limit: int | None = None,
     ):
         self.filter = filter
         self.prefetch = prefetch
@@ -65,7 +65,7 @@ class KeepOriginal(_FieldOverride):
             when the callable returns True; otherwise uses the clone.
     """
 
-    def __init__(self, *, when: Optional[Callable[..., bool]] = None):
+    def __init__(self, *, when: Callable[..., bool] | None = None):
         self.when = when
 
 
@@ -77,7 +77,7 @@ class Anonymize(_FieldOverride):
             (instance, ctx) -> anonymized_value.
     """
 
-    def __init__(self, provider: Union[str, Callable[..., Any]]):
+    def __init__(self, provider: str | Callable[..., Any]):
         self.provider = provider
 
 
@@ -105,7 +105,7 @@ class GraphSpec:
         )
     """
 
-    def __init__(self, *args: Union[type[Model], dict[type[Model], dict[str, _FieldOverride]]]):
+    def __init__(self, *args: type[Model] | dict[type[Model], dict[str, _FieldOverride]]):
         self._models: dict[type[Model], dict[str, _FieldOverride]] = {}
 
         for arg in args:
