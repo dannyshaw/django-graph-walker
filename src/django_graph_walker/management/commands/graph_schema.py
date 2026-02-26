@@ -12,7 +12,7 @@ from django_graph_walker.spec import GraphSpec
 
 
 class Command(BaseCommand):
-    help = "Visualize model relationship schema as DOT, PNG, or JSON."
+    help = "Visualize model relationship schema as DOT, PNG, JSON, or interactive HTML."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -33,9 +33,9 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--format",
-            choices=["dot", "png", "svg", "pdf", "json"],
+            choices=["dot", "png", "svg", "pdf", "json", "html", "3d"],
             default="dot",
-            help="Output format (default: dot).",
+            help="Output format (default: dot). html=Cytoscape.js, 3d=3d-force-graph.",
         )
         parser.add_argument(
             "--exclude",
@@ -48,15 +48,35 @@ class Command(BaseCommand):
             action="store_true",
             help="Hide field names on edges.",
         )
+        parser.add_argument(
+            "--serve",
+            action="store_true",
+            help="Serve the output via a local HTTP server and open in browser. "
+            "Implies --format=html if no format specified. Press Ctrl+C to stop.",
+        )
+        parser.add_argument(
+            "--port",
+            type=int,
+            default=0,
+            help="Port for --serve (default: random available port).",
+        )
 
     def handle(self, *args, **options):
         spec = self._build_spec(options)
+
+        if options["serve"]:
+            if options["format"] not in ("html", "3d"):
+                options["format"] = "html"
+            self._serve(spec, options)
+            return
 
         if options["format"] == "json":
             output = self._to_json(spec)
         elif options["format"] in ("png", "svg", "pdf"):
             self._render_graphviz(spec, options)
             return
+        elif options["format"] in ("html", "3d"):
+            output = self._to_interactive(spec, options)
         else:
             output = self._to_dot(spec, options)
 
@@ -135,6 +155,18 @@ class Command(BaseCommand):
 
         return json.dumps({"models": models_list, "edges": edges_list}, indent=2)
 
+    def _to_interactive(self, spec: GraphSpec, options) -> str:
+        from django_graph_walker.actions.interactive import InteractiveRenderer
+        from django_graph_walker.actions.visualize import Visualize
+
+        show_field_names = not options["no_field_names"]
+        graph_data = Visualize(show_field_names=show_field_names).schema_to_dict(spec)
+        renderer = InteractiveRenderer()
+
+        if options["format"] == "3d":
+            return renderer.to_3d_html(graph_data, title="Model Schema")
+        return renderer.to_cytoscape_html(graph_data, title="Model Schema")
+
     def _render_graphviz(self, spec: GraphSpec, options):
         try:
             import graphviz
@@ -162,3 +194,49 @@ class Command(BaseCommand):
             # Write binary to stdout
             data = source.pipe(format=fmt)
             sys.stdout.buffer.write(data)
+
+    def _serve(self, spec: GraphSpec, options):
+        import http.server
+        import socketserver
+        import tempfile
+        import threading
+        import webbrowser
+        from pathlib import Path
+
+        html = self._to_interactive(spec, options)
+
+        # Write to -o path if given, otherwise a temp file
+        if options["output"]:
+            out_path = Path(options["output"]).resolve()
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(html)
+        else:
+            tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w")
+            tmp.write(html)
+            tmp.close()
+            out_path = Path(tmp.name)
+
+        serve_dir = str(out_path.parent)
+        filename = out_path.name
+        port = options["port"]
+
+        handler = http.server.SimpleHTTPRequestHandler
+        with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
+            httpd.allow_reuse_address = True
+            actual_port = httpd.server_address[1]
+            url = f"http://127.0.0.1:{actual_port}/{filename}"
+
+            # Serve from the file's directory
+            import os
+
+            os.chdir(serve_dir)
+
+            self.stderr.write(self.style.SUCCESS(f"Serving at {url}"))
+            self.stderr.write("Press Ctrl+C to stop.")
+
+            threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                self.stderr.write("\nStopped.")

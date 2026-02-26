@@ -195,6 +195,107 @@ class Visualize:
             return list(manager.all()) if manager else []
         return []
 
+    def schema_to_dict(self, spec: GraphSpec) -> dict:
+        """Return schema graph as structured data for interactive rendering.
+
+        Returns a dict with 'nodes' and 'edges' lists suitable for
+        Cytoscape.js, 3d-force-graph, or any JSON-consuming renderer.
+        """
+        models = sorted(spec.models, key=lambda m: m.__name__)
+        color_map = {m: _MODEL_COLORS[i % len(_MODEL_COLORS)] for i, m in enumerate(models)}
+
+        nodes = []
+        for model in models:
+            fields = get_model_fields(model, in_scope=spec.models)
+            field_names = [fi.name for fi in fields if fi.field_class == FieldClass.VALUE]
+            nodes.append(
+                {
+                    "id": model.__name__,
+                    "label": model.__name__,
+                    "color": color_map[model],
+                    "field_count": len(field_names),
+                    "fields": field_names,
+                }
+            )
+
+        edges = []
+        seen_edges: set[tuple[str, str, str]] = set()
+        for model in models:
+            fields = get_model_fields(model, in_scope=spec.models)
+            for fi in fields:
+                edge_info = self._schema_edge(model, fi, spec)
+                if edge_info is None:
+                    continue
+                source, target, label, attrs = edge_info
+                edge_key = (source, target, label)
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                edges.append(
+                    {
+                        "source": source,
+                        "target": target,
+                        "label": label,
+                        "field_class": fi.field_class.name,
+                        "style": attrs.get("style", "solid"),
+                    }
+                )
+
+        return {"nodes": nodes, "edges": edges}
+
+    def instances_to_dict(self, walk_result: WalkResult) -> dict:
+        """Return instance graph as structured data for interactive rendering.
+
+        Returns a dict with 'nodes' and 'edges' lists suitable for
+        Cytoscape.js, 3d-force-graph, or any JSON-consuming renderer.
+        """
+        by_model = walk_result.by_model()
+        models = sorted(by_model.keys(), key=lambda m: m.__name__)
+        color_map = {m: _MODEL_COLORS[i % len(_MODEL_COLORS)] for i, m in enumerate(models)}
+        visited_pks = {(type(i), i.pk) for i in walk_result}
+        in_scope = set(by_model.keys())
+
+        nodes = []
+        for model in models:
+            color = color_map[model]
+            for instance in by_model[model]:
+                nodes.append(
+                    {
+                        "id": f"{model.__name__}_{instance.pk}",
+                        "label": str(instance),
+                        "model": model.__name__,
+                        "pk": instance.pk,
+                        "color": color,
+                        "group": model.__name__,
+                    }
+                )
+
+        edges = []
+        for model in models:
+            fields = get_model_fields(model, in_scope=in_scope)
+            for fi in fields:
+                if fi.field_class not in (
+                    FieldClass.FK_IN_SCOPE,
+                    FieldClass.O2O_IN_SCOPE,
+                    FieldClass.M2M_IN_SCOPE,
+                ):
+                    continue
+                for instance in by_model[model]:
+                    targets = self._get_instance_targets(instance, fi)
+                    for target in targets:
+                        if (type(target), target.pk) not in visited_pks:
+                            continue
+                        edges.append(
+                            {
+                                "source": f"{model.__name__}_{instance.pk}",
+                                "target": f"{type(target).__name__}_{target.pk}",
+                                "label": fi.name,
+                                "field_class": fi.field_class.name,
+                            }
+                        )
+
+        return {"nodes": nodes, "edges": edges}
+
     def schema_to_graphviz(self, spec: GraphSpec):
         """Return a graphviz.Digraph object for the schema. Requires graphviz package."""
         import graphviz

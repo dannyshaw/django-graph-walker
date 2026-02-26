@@ -248,6 +248,40 @@ graph = viz.instances_to_graphviz(result)
 graph.render("instances", format="svg")
 ```
 
+### Interactive Visualization
+
+Generate self-contained interactive HTML files -- no server required, JS loaded from CDN, zero extra Python dependencies.
+
+**Cytoscape.js** (`--format=html`) -- clean 2D directed graph with dagre layout:
+
+```python
+from django_graph_walker.actions.visualize import Visualize
+from django_graph_walker.actions.interactive import InteractiveRenderer
+
+graph_data = Visualize().schema_to_dict(spec)
+html = InteractiveRenderer().to_cytoscape_html(graph_data, title="My Schema")
+# Write to file and open in browser
+```
+
+Features: dagre top-down layout, zoom/pan/drag, hover tooltips on edges, click-to-highlight connected nodes, sidebar with field details, edge styling by relationship type.
+
+**3d-force-graph** (`--format=3d`) -- 3D WebGL with animated directional particles:
+
+```python
+graph_data = Visualize().schema_to_dict(spec)
+html = InteractiveRenderer().to_3d_html(graph_data, title="My Schema")
+```
+
+Features: 3D orbit controls, always-visible text labels on nodes, animated particles flowing along edges showing FK direction, click-to-fly-to-node camera, force-directed layout with charge repulsion for clear spacing.
+
+Both renderers also work with instance-level data:
+
+```python
+result = GraphWalker(spec).walk(article)
+graph_data = Visualize().instances_to_dict(result)
+html = InteractiveRenderer().to_cytoscape_html(graph_data, title="Instance Graph")
+```
+
 ## Management Commands
 
 Add `"django_graph_walker"` to `INSTALLED_APPS` to enable management commands:
@@ -272,6 +306,12 @@ python manage.py graph_schema books --format=png -o schema.png
 
 # Machine-readable JSON
 python manage.py graph_schema books --format=json
+
+# Interactive HTML (Cytoscape.js + dagre layout)
+python manage.py graph_schema books --format=html -o schema.html
+
+# 3D interactive HTML (3d-force-graph with animated particles)
+python manage.py graph_schema books --format=3d -o schema3d.html
 
 # Exclude specific models
 python manage.py graph_schema books --exclude=books.Review
@@ -317,6 +357,36 @@ python manage.py graph_deps books --orphans
 # Machine-readable JSON
 python manage.py graph_deps books.Book --format=json
 ```
+
+### `graph_fanout` -- Fan-out risk analysis
+
+```bash
+# Analyze an app for fan-out risks
+python manage.py graph_fanout books
+
+# Multiple apps
+python manage.py graph_fanout books reviews
+
+# All apps
+python manage.py graph_fanout --all
+
+# Analyze a specific GraphSpec object (dotted import path)
+python manage.py graph_fanout --spec=myapp.specs.my_spec
+
+# Add DB cardinality estimates
+python manage.py graph_fanout books --estimate
+
+# Machine-readable JSON
+python manage.py graph_fanout books --format=json
+
+# Adjust shared-reference sensitivity (default: 3)
+python manage.py graph_fanout books --threshold=2
+
+# Exclude specific models
+python manage.py graph_fanout books --exclude=books.Review
+```
+
+Detects cycles, bidirectional edges, limit bypasses (where `Follow(limit=N)` is circumvented by an alternate unlimited path), and shared references (models reachable from many sources that fan back out).
 
 ## Settings
 

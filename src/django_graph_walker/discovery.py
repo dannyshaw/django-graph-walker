@@ -79,6 +79,15 @@ def classify_field(field: Field, in_scope: set[type[Model]]) -> FieldClass:
     Returns:
         FieldClass indicating the field's role in graph traversal.
     """
+    # OneToOneFields that are also primary keys (multi-table inheritance parent
+    # links, or shared-PK patterns) are both a PK and an FK dependency.
+    # Classify as O2O so the topological sort sees the ordering constraint.
+    if isinstance(field, OneToOneField) and getattr(field, "primary_key", False):
+        related = field.related_model
+        if related in in_scope:
+            return FieldClass.O2O_IN_SCOPE
+        return FieldClass.O2O_OUT_OF_SCOPE
+
     if hasattr(field, "primary_key") and field.primary_key:
         return FieldClass.PK
 
