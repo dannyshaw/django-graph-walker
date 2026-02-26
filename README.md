@@ -4,9 +4,36 @@ Walk Django model relationship graphs for cloning, subsetting, export, and visua
 
 ## Overview
 
-django-graph-walker traverses Django model relationships using breadth-first search, collecting all reachable instances into a result set you can export, visualize, or inspect. It is designed for tasks like creating dev/test data subsets from production, cloning content trees with all their dependencies, and understanding complex schema relationships.
+django-graph-walker traverses Django model relationships using breadth-first search, collecting all reachable instances into a result set you can clone, export, visualize, or inspect.
 
 The walker uses batch prefetching so queries scale with the number of edge types per BFS level, not with the number of instances. A walk across thousands of instances typically requires only a handful of queries per relationship type.
+
+### When is this useful?
+
+Any time you need to operate on a **connected subgraph** of Django model instances rather than individual rows:
+
+- **Rich object duplication** — Apps with deeply nested domain models often need a "duplicate" feature. Manually writing clone logic for each model is brittle and breaks when the schema changes. The walker discovers the full dependency graph automatically and `Clone` duplicates it with FK remapping in one pass:
+
+  ```python
+  # Example: an LMS where a Course has Modules → Lessons → Quizzes → Questions → Answers.
+  # Duplicate an entire course and all its content in one shot.
+  spec = GraphSpec({
+      Course: {"title": Override(lambda inst, ctx: f"Copy of {inst.title}")},
+      Module: {},
+      Lesson: {},
+      Quiz: {},
+      Question: {},
+      Answer: {},
+  })
+
+  result = GraphWalker(spec).walk(course)
+  cloned = Clone(spec).execute(result)
+  new_course = cloned.get_clone(course)
+  ```
+
+- **Dev/test data subsetting** — Extract a realistic slice of production data (e.g. one tenant's data, one org's projects) with all its dependencies intact, rather than dumping entire tables or hand-crafting fixtures.
+- **Cross-database export** — Copy a subgraph to a staging or analytics database with automatic PK remapping, optional anonymization, and dependency ordering.
+- **Schema understanding** — Visualize how your models actually connect (including reverse relations and MTI) to find hidden coupling, circular dependencies, or fan-out risks before they cause problems.
 
 ## Installation
 
@@ -325,7 +352,7 @@ html = InteractiveRenderer().to_cytoscape_html(graph_data, title="Instance Graph
 
 ## Management Commands
 
-Add `"django_graph_walker"` to `INSTALLED_APPS` to enable management commands:
+The core library works without any Django configuration. If you want the management commands below, add `"django_graph_walker"` to `INSTALLED_APPS`:
 
 ### `graph_schema` -- Visualize model relationships
 
