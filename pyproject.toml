@@ -29,6 +29,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dannyshaw/django-graph-walker"
+Repository = "https://github.com/dannyshaw/django-graph-walker"
+Issues = "https://github.com/dannyshaw/django-graph-walker/issues"
+
 dependencies = [
     "django>=3.2",
 ]
