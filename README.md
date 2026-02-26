@@ -12,25 +12,7 @@ The walker uses batch prefetching so queries scale with the number of edge types
 
 Any time you need to operate on a **connected subgraph** of Django model instances rather than individual rows:
 
-- **Rich object duplication** — Apps with deeply nested domain models often need a "duplicate" feature. Manually writing clone logic for each model is brittle and breaks when the schema changes. The walker discovers the full dependency graph automatically and `Clone` duplicates it with FK remapping in one pass:
-
-  ```python
-  # Example: an LMS where a Course has Modules → Lessons → Quizzes → Questions → Answers.
-  # Duplicate an entire course and all its content in one shot.
-  spec = GraphSpec({
-      Course: {"title": Override(lambda inst, ctx: f"Copy of {inst.title}")},
-      Module: {},
-      Lesson: {},
-      Quiz: {},
-      Question: {},
-      Answer: {},
-  })
-
-  result = GraphWalker(spec).walk(course)
-  cloned = Clone(spec).execute(result)
-  new_course = cloned.get_clone(course)
-  ```
-
+- **Rich object duplication** — Apps with deeply nested domain models often need a "duplicate" feature. Manually writing clone logic for each model is brittle and breaks when the schema changes. The walker discovers the full dependency graph automatically and `Clone` duplicates it with FK remapping in one pass. See the [project template example](examples/project_template/) for a working demo of cloning a project with all its sections and tasks for a new user.
 - **Dev/test data subsetting** — Extract a realistic slice of production data (e.g. one tenant's data, one org's projects) with all its dependencies intact, rather than dumping entire tables or hand-crafting fixtures.
 - **Cross-database export** — Copy a subgraph to a staging or analytics database with automatic PK remapping, optional anonymization, and dependency ordering.
 - **Schema understanding** — Visualize how your models actually connect (including reverse relations and MTI) to find hidden coupling, circular dependencies, or fan-out risks before they cause problems.
@@ -470,7 +452,8 @@ GRAPH_WALKER = {
 
 ## Examples
 
-See [`examples/bookstore/`](examples/bookstore/) for a working example project that demonstrates walking a bookstore data model, exporting to JSON fixtures, and generating interactive graph visualizations.
+- [`examples/project_template/`](examples/project_template/) — Clone a project template for a new user (object duplication with FK remapping)
+- [`examples/bookstore/`](examples/bookstore/) — Walk a bookstore data model, export to JSON fixtures, and generate interactive graph visualizations
 
 ## Acknowledgements
 
