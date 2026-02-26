@@ -6,6 +6,7 @@ def __getattr__(name):
     _spec_exports = {"Anonymize", "Follow", "GraphSpec", "Ignore", "KeepOriginal", "Override"}
     _walker_exports = {"GraphWalker"}
     _analysis_exports = {"FanoutAnalyzer"}
+    _clone_exports = {"Clone"}
 
     if name in _spec_exports:
         from django_graph_walker import spec
@@ -22,6 +23,11 @@ def __getattr__(name):
 
         return getattr(analysis, name)
 
+    if name in _clone_exports:
+        from django_graph_walker.actions import clone
+
+        return getattr(clone, name)
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -29,6 +35,7 @@ __all__ = [
     "GraphSpec",
     "GraphWalker",
     "FanoutAnalyzer",
+    "Clone",
     "Follow",
     "Ignore",
     "Override",

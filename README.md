@@ -169,6 +169,47 @@ Properties:
 
 ## Actions
 
+### Clone
+
+The `Clone` action duplicates a walked subgraph within the same database, creating new instances with new PKs and remapping all FKs to point to the clones.
+
+```python
+from django_graph_walker.actions.clone import Clone
+
+spec = GraphSpec({
+    Article: {
+        "title": Override(lambda inst, ctx: f"Copy of {inst.title}"),
+        "author": KeepOriginal(),   # point to original author, don't clone
+    },
+    Category: {},
+    Tag: {},
+})
+
+result = GraphWalker(spec).walk(article)
+cloned = Clone(spec).execute(result)
+
+# Access cloned instances
+cloned_article = cloned.get_clone(article)
+print(cloned_article.title)   # "Copy of My Article"
+print(cloned_article.author)  # original author (KeepOriginal)
+print(cloned.clone_count)     # total clones created
+
+# Get a WalkResult of all clones
+clone_result = cloned.result
+```
+
+**With context** -- pass data to Override/KeepOriginal callables:
+
+```python
+cloned = Clone(spec).execute(result, ctx={"tenant_id": 42})
+```
+
+Spec overrides applied during cloning:
+- `Override(value)` -- replace a field value (static or callable)
+- `KeepOriginal()` -- keep the original FK target instead of remapping to the clone
+- `Anonymize(provider)` -- anonymize with faker or a callable
+- Out-of-scope FKs automatically keep their original references
+
 ### Export
 
 The `Export` class serializes walk results to JSON fixtures or copies them to another database.

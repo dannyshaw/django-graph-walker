@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from django.contrib.contenttypes.fields import GenericRelation
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.db.models import Field, ForeignKey, ManyToManyField, ManyToManyRel, Model
 from django.db.models.fields.related import OneToOneField, OneToOneRel
 from django.db.models.fields.reverse_related import ForeignObjectRel, ManyToOneRel
@@ -132,6 +132,12 @@ def classify_field(field: Field, in_scope: set[type[Model]]) -> FieldClass:
         if related in in_scope:
             return FieldClass.M2M_IN_SCOPE
         return FieldClass.M2M_OUT_OF_SCOPE
+
+    # GenericForeignKey is a virtual composite descriptor (not a real DB column).
+    # Its constituent fields (content_type FK + object_id integer) are handled
+    # individually. Classify as PK to exclude from clone copying.
+    if isinstance(field, GenericForeignKey):
+        return FieldClass.PK
 
     # Catch-all: simple value field
     return FieldClass.VALUE
