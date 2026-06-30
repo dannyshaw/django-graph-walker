@@ -91,6 +91,34 @@ class PremiumArticle(Article):
         app_label = "testapp"
 
 
+class ArticleContributor(models.Model):
+    """Explicit through table for Article ↔ Author M2M (contributors)."""
+
+    article = models.ForeignKey(Article, on_delete=models.CASCADE)
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+    role = models.CharField(max_length=50, default="contributor")
+
+    class Meta:
+        app_label = "testapp"
+        unique_together = [("article", "author")]
+
+    def __str__(self):
+        return f"{self.author} → {self.article} ({self.role})"
+
+
+# Add the M2M-through field to Article via monkey-patch style addition
+# (Django needs this on the model class directly, so we add it after both are defined)
+Article.add_to_class(
+    "contributors",
+    models.ManyToManyField(
+        Author,
+        through=ArticleContributor,
+        related_name="contributed_articles",
+        blank=True,
+    ),
+)
+
+
 class Comment(models.Model):
     """Generic FK — can comment on any model."""
 

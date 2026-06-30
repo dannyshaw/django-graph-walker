@@ -499,11 +499,13 @@ class TestBatchPrefetch:
         # Expected queries:
         #   1. prefetch articles for Author batch (reverse FK)
         #   2. prefetch reviewed_articles for Author batch (reverse FK)
-        #   3. prefetch category for Article batch (forward FK via Follow)
-        #   4. prefetch children for Category batch (reverse self-FK)
-        #   5. prefetch articles for Category batch (reverse FK)
-        # Key: 5 queries for 10 articles, not 10+ individual FK loads
-        with django_assert_num_queries(5):
+        #   3. prefetch contributed_articles for Author batch (reverse M2M via through)
+        #   4. prefetch category for Article batch (forward FK via Follow)
+        #   5. prefetch articlecontributor_set for Article batch (reverse FK from through)
+        #   6. prefetch children for Category batch (reverse self-FK)
+        #   7. prefetch articles for Category batch (reverse FK)
+        # Key: 7 queries for 10 articles, not 10+ individual FK loads
+        with django_assert_num_queries(7):
             result = GraphWalker(spec).walk(author)
 
         assert result.instance_count == 12  # 1 author + 10 articles + 1 category

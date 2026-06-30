@@ -109,7 +109,14 @@ class TestCycleDetection:
     def test_ignoring_edge_removes_cycle(self):
         # Article -> Author via author FK; break the reverse with Ignore
         spec = GraphSpec(
-            {Author: {"articles": Ignore(), "reviewed_articles": Ignore(), "comments": Ignore()}},
+            {
+                Author: {
+                    "articles": Ignore(),
+                    "reviewed_articles": Ignore(),
+                    "comments": Ignore(),
+                    "contributed_articles": Ignore(),
+                }
+            },
             Article,
             Category,
             Tag,
@@ -168,7 +175,13 @@ class TestBidirectionalDetection:
 
     def test_not_bidirectional_when_one_ignored(self):
         spec = GraphSpec(
-            {Author: {"articles": Ignore(), "reviewed_articles": Ignore()}},
+            {
+                Author: {
+                    "articles": Ignore(),
+                    "reviewed_articles": Ignore(),
+                    "contributed_articles": Ignore(),
+                }
+            },
             {Article: {"reviewer": Ignore()}},
             Category,
             Tag,

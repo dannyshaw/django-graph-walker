@@ -7,8 +7,9 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from django.core import serializers
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models, transaction
+from django.db.models.fields.files import FieldFile
 
 from django_graph_walker.discovery import FieldClass, get_model_fields
 from django_graph_walker.result import WalkResult
@@ -19,17 +20,38 @@ logger = logging.getLogger(__name__)
 AnonymizerValue = Callable[..., Any] | str
 
 
+class _FixtureEncoder(DjangoJSONEncoder):
+    """JSON encoder handling Django field edge cases beyond DjangoJSONEncoder.
+
+    Handles: FieldFile, bytes, memoryview, set/frozenset.
+    """
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, FieldFile):
+            return o.name if o.name else None
+        if isinstance(o, bytes):
+            return o.decode("utf-8", errors="replace")
+        if isinstance(o, memoryview):
+            return bytes(o).decode("utf-8", errors="replace")
+        if isinstance(o, (set, frozenset)):
+            return list(o)
+        return super().default(o)
+
+
 class Export:
     """Export collected instances to fixtures or another database.
 
     Usage:
         result = GraphWalker(spec).walk(article)
 
-        # Export to JSON fixture
-        json_str = Export(format='json').to_fixture(result)
+        # Export to JSON fixture (structured data)
+        data = Export().to_fixture_data(result)
+
+        # Export to JSON string
+        json_str = Export().to_fixture(result)
 
         # Export to file
-        Export(format='json').to_file(result, 'dev_data.json')
+        Export().to_file(result, 'dev_data.json')
 
         # Export to another database
         Export().to_database(result, target_db='dev')
@@ -47,12 +69,17 @@ class Export:
         use_natural_keys: bool = False,
         anonymizers: dict[str, AnonymizerValue] | None = None,
     ):
+        if format != "json":
+            raise ValueError(
+                f"Only 'json' format is supported, got '{format}'. "
+                f"Non-JSON formats may be added in a future version."
+            )
         self.format = format
         self.use_natural_keys = use_natural_keys
         self.anonymizers = anonymizers or {}
-        self._faker = None
+        self._faker: Any = None
 
-    def _get_faker(self):
+    def _get_faker(self) -> Any:
         """Lazy-load faker instance."""
         if self._faker is None:
             from faker import Faker
@@ -75,66 +102,138 @@ class Export:
             )
         return provider()
 
-    def _anonymize_instance_data(
+    def _build_visited_pks(self, walk_result: WalkResult) -> set[tuple[str, Any]]:
+        """Build a set of (model_label_lower, pk) for O(1) membership checks."""
+        visited: set[tuple[str, Any]] = set()
+        for instance in walk_result:
+            visited.add((instance._meta.label_lower, instance.pk))
+        return visited
+
+    def _build_visited_instances(
+        self, walk_result: WalkResult
+    ) -> dict[tuple[str, Any], models.Model]:
+        """Build a lookup from (model_label_lower, pk) to instance."""
+        lookup: dict[tuple[str, Any], models.Model] = {}
+        for instance in walk_result:
+            lookup[(instance._meta.label_lower, instance.pk)] = instance
+        return lookup
+
+    def _serialize_instance(
         self,
-        model: type[models.Model],
         instance: models.Model,
-        fields_dict: dict[str, Any],
+        visited_pks: set[tuple[str, Any]],
+        visited_instances: dict[tuple[str, Any], models.Model],
         ctx: dict,
     ) -> dict[str, Any]:
-        """Apply anonymization to a field dict."""
+        """Serialize a single model instance to a fixture dict, entirely from memory.
+
+        - FK/O2O: nulled out if target not in visited_pks
+        - M2M (auto-created through only): filtered to PKs in visited_pks
+        - Explicit through M2M: skipped (through records are serialized separately)
+        - Anonymizers: applied inline
+        - Natural keys: supported for FK and PK
+        """
+        model = type(instance)
         model_name = model.__name__
-        result = dict(fields_dict)
-        for field_name in list(result.keys()):
-            key = f"{model_name}.{field_name}"
-            if key in self.anonymizers:
-                result[field_name] = self._resolve_anonymizer(key, instance, ctx)
-        return result
+        model_label = instance._meta.label_lower
+        fields_data: dict[str, Any] = {}
+
+        # Local fields (value fields + FK/O2O)
+        for field in model._meta.local_fields:
+            if field.primary_key:
+                continue
+
+            field_name = field.name
+            anon_key = f"{model_name}.{field_name}"
+
+            if anon_key in self.anonymizers:
+                fields_data[field_name] = self._resolve_anonymizer(anon_key, instance, ctx)
+                continue
+
+            if field.remote_field:
+                # FK or O2O — read raw attname (e.g. author_id)
+                fk_value = getattr(instance, field.attname, None)
+                if fk_value is not None:
+                    target_label = field.related_model._meta.label_lower
+                    if (target_label, fk_value) not in visited_pks:
+                        # Target not in walk result — null out
+                        fk_value = None
+                    elif self.use_natural_keys and fk_value is not None:
+                        # Try natural key serialization
+                        target_instance = visited_instances.get((target_label, fk_value))
+                        if target_instance is not None and hasattr(target_instance, "natural_key"):
+                            fk_value = target_instance.natural_key()
+                fields_data[field_name] = fk_value
+            else:
+                fields_data[field_name] = field.value_from_object(instance)
+
+        # M2M fields (only auto-created through tables)
+        for field in model._meta.local_many_to_many:
+            field_name = field.name
+            anon_key = f"{model_name}.{field_name}"
+
+            if anon_key in self.anonymizers:
+                fields_data[field_name] = self._resolve_anonymizer(anon_key, instance, ctx)
+                continue
+
+            # Skip explicit through tables — they are serialized as their own records
+            if not field.remote_field.through._meta.auto_created:
+                continue
+
+            target_label = field.related_model._meta.label_lower
+            manager = getattr(instance, field_name)
+
+            # Try prefetch cache first (no DB query)
+            try:
+                cached = manager.all()._result_cache
+                if cached is not None:
+                    pks = [obj.pk for obj in cached if (target_label, obj.pk) in visited_pks]
+                    fields_data[field_name] = pks
+                    continue
+            except AttributeError:
+                pass
+
+            # No prefetch cache — empty list rather than hitting DB
+            fields_data[field_name] = []
+
+        # Build the fixture record
+        pk = instance.pk
+        if self.use_natural_keys and hasattr(instance, "natural_key"):
+            pk = None
+
+        return {
+            "model": model_label,
+            "pk": pk,
+            "fields": fields_data,
+        }
+
+    def to_fixture_data(
+        self, walk_result: WalkResult, ctx: dict | None = None
+    ) -> list[dict[str, Any]]:
+        """Serialize walk result to a list of fixture dicts.
+
+        Returns structured data suitable for post-processing before JSON encoding.
+        Instances are ordered by dependency (FK targets before FK sources).
+        Does not query the database — works entirely from in-memory instances.
+        """
+        ctx = ctx or {}
+        visited_pks = self._build_visited_pks(walk_result)
+        visited_instances = self._build_visited_instances(walk_result)
+        ordered = self._get_ordered_instances(walk_result)
+
+        return [
+            self._serialize_instance(instance, visited_pks, visited_instances, ctx)
+            for instance in ordered
+        ]
 
     def to_fixture(self, walk_result: WalkResult, ctx: dict | None = None) -> str:
         """Serialize walk result to a JSON fixture string.
 
         Instances are ordered by dependency (FK targets before FK sources).
+        Does not query the database — works entirely from in-memory instances.
         """
-        ctx = ctx or {}
-        ordered = self._get_ordered_instances(walk_result)
-
-        if not self.anonymizers:
-            # Fast path: use Django's built-in serializer
-            return serializers.serialize(
-                self.format,
-                ordered,
-                indent=2,
-                use_natural_foreign_keys=self.use_natural_keys,
-                use_natural_primary_keys=self.use_natural_keys,
-            )
-
-        # Slow path: serialize, then apply anonymization
-        raw = serializers.serialize(
-            self.format,
-            ordered,
-            indent=2,
-            use_natural_foreign_keys=self.use_natural_keys,
-            use_natural_primary_keys=self.use_natural_keys,
-        )
-        data = json.loads(raw)
-
-        # Build instance lookup for anonymizer callbacks
-        instance_map = {}
-        for instance in ordered:
-            model_label = instance._meta.label_lower
-            instance_map[(model_label, instance.pk)] = instance
-
-        for item in data:
-            model_label = item["model"]
-            pk = item["pk"]
-            instance = instance_map.get((model_label, pk))
-            if instance is None:
-                continue
-            model = type(instance)
-            item["fields"] = self._anonymize_instance_data(model, instance, item["fields"], ctx)
-
-        return json.dumps(data, indent=2)
+        data = self.to_fixture_data(walk_result, ctx)
+        return json.dumps(data, indent=2, cls=_FixtureEncoder)
 
     def to_file(
         self,

@@ -5,6 +5,7 @@ import pytest
 from django_graph_walker.spec import GraphSpec
 from tests.testapp.models import (
     Article,
+    ArticleContributor,
     ArticleStats,
     Author,
     Category,
@@ -13,7 +14,16 @@ from tests.testapp.models import (
     Tag,
 )
 
-TESTAPP_MODELS = {Author, Category, Tag, Article, ArticleStats, PremiumArticle, Comment}
+TESTAPP_MODELS = {
+    Author,
+    Category,
+    Tag,
+    Article,
+    ArticleContributor,
+    ArticleStats,
+    PremiumArticle,
+    Comment,
+}
 
 
 class TestFromApp:
