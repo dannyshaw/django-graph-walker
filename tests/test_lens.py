@@ -4,7 +4,7 @@ import pytest
 
 from django_graph_walker import GraphSpec, Ignore, Mask
 from django_graph_walker.actions.lens import Lens
-from tests.testapp.models import Article, Author, Tag
+from tests.testapp.models import Article, Author, Category, Tag
 
 
 class TestMaskOverride:
@@ -163,3 +163,23 @@ class TestSchemaContext:
         article = next(v for v in ctx["views"] if v["model"] == "Article")
         rels = {(r["via"], r["to"]) for r in article["relationships"]}
         assert ("author_id", "testapp_author") in rels
+
+    def test_masked_fk_not_advertised_as_relationship(self):
+        spec = GraphSpec({Article: {"author": Mask("hash")}, Author: {}, Category: {}})
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        article = next(v for v in ctx["views"] if v["model"] == "Article")
+        vias = {r["via"] for r in article["relationships"]}
+        assert "author_id" not in vias  # masked FK is not a usable join key
+        assert "category_id" in vias  # unmasked FK still advertised
+        cols = {c["name"]: c for c in article["columns"]}
+        assert cols["author_id"]["masked"] == "hash"  # column still present, flagged
+
+    def test_dropped_fk_not_advertised_as_relationship(self):
+        spec = GraphSpec({Article: {"author": Ignore()}, Author: {}, Category: {}})
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        article = next(v for v in ctx["views"] if v["model"] == "Article")
+        vias = {r["via"] for r in article["relationships"]}
+        assert "author_id" not in vias
+        assert "category_id" in vias
+        names = {c["name"] for c in article["columns"]}
+        assert "author_id" not in names

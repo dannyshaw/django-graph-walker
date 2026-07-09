@@ -156,7 +156,8 @@ class Lens:
             for fi in get_model_fields(model, in_scope=in_scope):
                 if fi.field_class not in (FieldClass.FK_IN_SCOPE, FieldClass.O2O_IN_SCOPE):
                     continue
-                if isinstance(overrides.get(fi.name), Ignore):
+                override = overrides.get(fi.name)
+                if isinstance(override, (Ignore, Mask)):
                     continue
                 relationships.append(
                     {
