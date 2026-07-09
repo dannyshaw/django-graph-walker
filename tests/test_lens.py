@@ -83,3 +83,20 @@ class TestMaskingInView:
         spec = GraphSpec({Author: {"email": Mask("null")}})
         ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
         assert 'NULL AS "email"' in ddl
+
+
+class TestRowFilters:
+    def test_row_filter_becomes_where_clause(self):
+        spec = GraphSpec(Article)
+        ddl = Lens(
+            spec,
+            schema_name="lens",
+            role_name="r",
+            row_filters={Article: "published = true"},
+        ).to_view_ddl()
+        assert 'FROM "public"."testapp_article"\nWHERE published = true;' in ddl
+
+    def test_no_filter_has_no_where(self):
+        spec = GraphSpec(Tag)
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert "WHERE" not in ddl

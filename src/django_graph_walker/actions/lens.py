@@ -31,6 +31,7 @@ class Lens:
             schema_name="staff_lens_masked",
             role_name="staff_masked",
             hash_salt="rotate-me",
+            row_filters={User: "is_test = false"},
         )
         view_sql = lens.to_view_ddl()
         role_sql = lens.to_role_ddl()
@@ -45,12 +46,14 @@ class Lens:
         role_name: str,
         hash_salt: str = "",
         source_schema: str = "public",
+        row_filters: dict[type[Model], str] | None = None,
     ):
         self.spec = spec
         self.schema_name = schema_name
         self.role_name = role_name
         self.hash_salt = hash_salt
         self.source_schema = source_schema
+        self.row_filters = row_filters or {}
 
     def _ordered_models(self) -> list[type[Model]]:
         return sorted(self.spec.models, key=lambda m: m._meta.db_table)
@@ -79,9 +82,12 @@ class Lens:
                 exprs.append("    " + expr)
         select_list = ",\n".join(exprs)
 
+        row_filter = self.row_filters.get(model)
+        where = f"\nWHERE {row_filter}" if row_filter else ""
+
         view = f"{_q(self.schema_name)}.{_q(db_table)}"
         source = f"{_q(self.source_schema)}.{_q(db_table)}"
-        return f"CREATE OR REPLACE VIEW {view} AS\nSELECT\n{select_list}\nFROM {source};"
+        return f"CREATE OR REPLACE VIEW {view} AS\nSELECT\n{select_list}\nFROM {source}{where};"
 
     def to_view_ddl(self) -> str:
         """DDL that (re)creates the lens schema and one view per allowlisted model."""
