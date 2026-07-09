@@ -332,6 +332,39 @@ graph_data = Visualize().instances_to_dict(result)
 html = InteractiveRenderer().to_cytoscape_html(graph_data, title="Instance Graph")
 ```
 
+### Lens
+
+The `Lens` action generates a curated, read-only Postgres view layer plus a
+restricted role from a `GraphSpec`, and an LLM-facing schema-context map. The
+spec's model set is the relation allowlist; `Ignore()` drops a column,
+`Mask(strategy)` masks it via a SQL expression (`hash`, `redact`, or `null`).
+
+```python
+from django_graph_walker import GraphSpec, Ignore, Mask
+from django_graph_walker.actions.lens import Lens
+
+MASKED_LENS = GraphSpec({
+    User: {"email": Mask("hash"), "password": Ignore()},
+    School: {},
+})
+
+lens = Lens(
+    MASKED_LENS,
+    schema_name="staff_lens_masked",
+    role_name="staff_masked",
+    hash_salt="rotate-me",
+    row_filters={User: "is_test = false"},
+)
+
+print(lens.to_view_ddl())        # CREATE SCHEMA + CREATE OR REPLACE VIEW ...
+print(lens.to_role_ddl())        # idempotent NOLOGIN role + GRANT SELECT + read-only
+context = lens.to_schema_context()  # {"schema", "role", "views": [...]}
+```
+
+The role is a read-only NOLOGIN group role: a login user is granted it and
+`SET ROLE`s into it, so no credentials are baked into the generated DDL. Views
+and grants are re-runnable (`CREATE OR REPLACE VIEW`, idempotent role block).
+
 ## Management Commands
 
 The core library works without any Django configuration. If you want the management commands below, add `"django_graph_walker"` to `INSTALLED_APPS`:
@@ -437,6 +470,21 @@ python manage.py graph_fanout books --exclude=books.Review
 ```
 
 Detects cycles, bidirectional edges, limit bypasses (where `Follow(limit=N)` is circumvented by an alternate unlimited path), and shared references (models reachable from many sources that fan back out).
+
+### `graph_lens` -- Generate a curated lens
+
+```bash
+# Print view DDL, role DDL, and schema context to stdout
+python manage.py graph_lens --spec myapp.specs.masked_lens --schema staff_lens_masked --role staff_masked
+
+# With a salt and row filters, writing to files
+python manage.py graph_lens \
+    --spec myapp.specs.masked_lens \
+    --schema staff_lens_masked --role staff_masked \
+    --salt "$LENS_SALT" \
+    --row-filter "User=is_test = false" \
+    --out-ddl lens/views.sql --out-role-ddl lens/role.sql --out-context lens/context.json
+```
 
 ## Settings
 
