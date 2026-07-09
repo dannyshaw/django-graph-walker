@@ -82,7 +82,7 @@ class Lens:
                 exprs.append("    " + expr)
         select_list = ",\n".join(exprs)
 
-        row_filter = self.row_filters.get(model)
+        row_filter = (self.row_filters.get(model) or "").strip()
         where = f"\nWHERE {row_filter}" if row_filter else ""
 
         view = f"{_q(self.schema_name)}.{_q(db_table)}"

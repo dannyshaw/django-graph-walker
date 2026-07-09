@@ -100,3 +100,8 @@ class TestRowFilters:
         spec = GraphSpec(Tag)
         ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
         assert "WHERE" not in ddl
+
+    def test_whitespace_only_filter_is_ignored(self):
+        spec = GraphSpec(Tag)
+        ddl = Lens(spec, schema_name="lens", role_name="r", row_filters={Tag: "   "}).to_view_ddl()
+        assert "WHERE" not in ddl
