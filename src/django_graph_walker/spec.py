@@ -81,6 +81,31 @@ class Anonymize(_FieldOverride):
         self.provider = provider
 
 
+class Mask(_FieldOverride):
+    """Mask a value/FK column in a generated lens view via a SQL expression.
+
+    Unlike Anonymize (which computes a Python value with faker for export/clone),
+    Mask produces a SQL expression baked into a CREATE VIEW column, so the
+    underlying value never leaves the database.
+
+    strategy:
+      - "hash":   md5(<col>::text || <salt>) -- deterministic, joinable, value hidden
+      - "redact": left(<col>::text, 1) || '***' -- partial reveal
+      - "null":   NULL -- column present but always null
+    Use Ignore() on a field to drop the column from the view entirely.
+    """
+
+    _STRATEGIES = ("hash", "redact", "null")
+
+    def __init__(self, strategy: str = "hash"):
+        if strategy not in self._STRATEGIES:
+            raise ValueError(
+                f"Unknown mask strategy '{strategy}'. "
+                f"Choose one of {self._STRATEGIES}, or use Ignore() to drop the column."
+            )
+        self.strategy = strategy
+
+
 class GraphSpec:
     """Define which models to include in a graph walk and how to handle their fields.
 

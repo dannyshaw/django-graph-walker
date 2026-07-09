@@ -1,0 +1,192 @@
+"""Lens action -- generate a curated read-only view layer + role DDL from a GraphSpec."""
+
+from __future__ import annotations
+
+from django.db.models import Model
+
+from django_graph_walker.discovery import FieldClass, get_model_fields
+from django_graph_walker.spec import GraphSpec, Ignore, Mask
+
+
+def _q(identifier: str) -> str:
+    """Double-quote a Postgres identifier, doubling any embedded double-quote."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _sql_str(value: str) -> str:
+    """Escape a value for inclusion in a single-quoted SQL string literal."""
+    return value.replace("'", "''")
+
+
+class Lens:
+    """Generate a curated, read-only Postgres lens (views + role) from a GraphSpec.
+
+    The spec's model set is the relation allowlist. Per-field overrides shape each
+    view's columns: Ignore() drops a column, Mask(strategy) masks it via a SQL
+    expression. The same spec also produces an LLM-facing schema-context dict
+    (to_schema_context).
+
+    Usage:
+        lens = Lens(
+            MASKED_LENS,
+            schema_name="staff_lens_masked",
+            role_name="staff_masked",
+            hash_salt="rotate-me",
+            row_filters={User: "is_test = false"},
+        )
+        view_sql = lens.to_view_ddl()
+        role_sql = lens.to_role_ddl()
+        context = lens.to_schema_context()
+    """
+
+    def __init__(
+        self,
+        spec: GraphSpec,
+        *,
+        schema_name: str,
+        role_name: str,
+        hash_salt: str = "",
+        source_schema: str = "public",
+        row_filters: dict[type[Model], str] | None = None,
+    ):
+        self.spec = spec
+        self.schema_name = schema_name
+        self.role_name = role_name
+        self.hash_salt = hash_salt
+        self.source_schema = source_schema
+        self.row_filters = row_filters or {}
+
+    def _ordered_models(self) -> list[type[Model]]:
+        return sorted(self.spec.models, key=lambda m: m._meta.db_table)
+
+    def _column_expr(self, column: str, override) -> str | None:
+        """SELECT expression for a column, or None if the column is dropped."""
+        if isinstance(override, Ignore):
+            return None
+        col = _q(column)
+        if isinstance(override, Mask):
+            if override.strategy == "hash":
+                return f"md5(({col})::text || '{_sql_str(self.hash_salt)}') AS {col}"
+            if override.strategy == "redact":
+                return f"(left(({col})::text, 1) || '***') AS {col}"
+            if override.strategy == "null":
+                return f"NULL AS {col}"
+        return col
+
+    def _uses_hash_mask(self) -> bool:
+        for model in self.spec.models:
+            for override in self.spec.get_overrides(model).values():
+                if isinstance(override, Mask) and override.strategy == "hash":
+                    return True
+        return False
+
+    def _view_ddl_for_model(self, model: type[Model]) -> str:
+        overrides = self.spec.get_overrides(model)
+        db_table = model._meta.db_table
+        exprs = []
+        for field in model._meta.local_fields:
+            expr = self._column_expr(field.column, overrides.get(field.name))
+            if expr is not None:
+                exprs.append("    " + expr)
+        select_list = ",\n".join(exprs)
+
+        row_filter = (self.row_filters.get(model) or "").strip()
+        where = f"\nWHERE {row_filter}" if row_filter else ""
+
+        view = f"{_q(self.schema_name)}.{_q(db_table)}"
+        source = f"{_q(self.source_schema)}.{_q(db_table)}"
+        return f"CREATE OR REPLACE VIEW {view} AS\nSELECT\n{select_list}\nFROM {source}{where};"
+
+    def to_view_ddl(self) -> str:
+        """DDL that (re)creates the lens schema and one view per allowlisted model."""
+        if self._uses_hash_mask() and not self.hash_salt.strip():
+            raise ValueError(
+                "hash_salt is required when any field uses Mask('hash'): "
+                "an empty salt produces unsalted md5, which is trivially reversible."
+            )
+        parts = [f"CREATE SCHEMA IF NOT EXISTS {_q(self.schema_name)};"]
+        parts.extend(self._view_ddl_for_model(m) for m in self._ordered_models())
+        return "\n\n".join(parts) + "\n"
+
+    def to_role_ddl(self) -> str:
+        """Idempotent DDL creating the read-only role and granting it SELECT on the lens.
+
+        The role is a NOLOGIN group role. A login user (with credentials managed
+        outside this DDL) is granted this role and SET ROLEs into it, so this
+        generator never emits secrets.
+        """
+        role = _q(self.role_name)
+        schema = _q(self.schema_name)
+        role_lit = _sql_str(self.role_name)
+        create_role = (
+            "DO $$\n"
+            "BEGIN\n"
+            f"   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_lit}') THEN\n"
+            f"      CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;\n"
+            "   END IF;\n"
+            "END\n"
+            "$$;"
+        )
+        return (
+            "\n".join(
+                [
+                    create_role,
+                    f"GRANT USAGE ON SCHEMA {schema} TO {role};",
+                    f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
+                    f"ALTER ROLE {role} SET default_transaction_read_only = on;",
+                    f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} "
+                    f"GRANT SELECT ON TABLES TO {role};",
+                ]
+            )
+            + "\n"
+        )
+
+    def to_schema_context(self) -> dict:
+        """LLM-facing map of the lens: views, columns (with types + mask flags),
+        docs, and in-scope relationships. Mirrors what the views actually expose.
+        """
+        in_scope = self.spec.models
+        views = []
+        for model in self._ordered_models():
+            overrides = self.spec.get_overrides(model)
+
+            columns = []
+            for field in model._meta.local_fields:
+                override = overrides.get(field.name)
+                if isinstance(override, Ignore):
+                    continue
+                columns.append(
+                    {
+                        "name": field.column,
+                        "type": field.get_internal_type(),
+                        "help_text": str(getattr(field, "help_text", "") or ""),
+                        "masked": override.strategy if isinstance(override, Mask) else None,
+                    }
+                )
+
+            relationships = []
+            for fi in get_model_fields(model, in_scope=in_scope):
+                if fi.field_class not in (FieldClass.FK_IN_SCOPE, FieldClass.O2O_IN_SCOPE):
+                    continue
+                override = overrides.get(fi.name)
+                if isinstance(override, (Ignore, Mask)):
+                    continue
+                relationships.append(
+                    {
+                        "to": fi.related_model._meta.db_table,
+                        "via": fi.field.column,
+                        "kind": fi.field_class.name,
+                    }
+                )
+
+            views.append(
+                {
+                    "view": model._meta.db_table,
+                    "model": model.__name__,
+                    "doc": (model.__doc__ or "").strip(),
+                    "columns": columns,
+                    "relationships": relationships,
+                }
+            )
+
+        return {"schema": self.schema_name, "role": self.role_name, "views": views}

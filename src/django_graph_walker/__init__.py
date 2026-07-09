@@ -3,7 +3,15 @@
 
 def __getattr__(name):
     """Lazy imports to avoid triggering Django model loading during app registry setup."""
-    _spec_exports = {"Anonymize", "Follow", "GraphSpec", "Ignore", "KeepOriginal", "Override"}
+    _spec_exports = {
+        "Anonymize",
+        "Follow",
+        "GraphSpec",
+        "Ignore",
+        "KeepOriginal",
+        "Mask",
+        "Override",
+    }
     _walker_exports = {"GraphWalker"}
     _analysis_exports = {"FanoutAnalyzer"}
     _clone_exports = {"Clone"}
@@ -41,6 +49,7 @@ __all__ = [
     "Override",
     "KeepOriginal",
     "Anonymize",
+    "Mask",
 ]
 
 __version__ = "0.1.0"
