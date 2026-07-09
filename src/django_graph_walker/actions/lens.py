@@ -94,3 +94,36 @@ class Lens:
         parts = [f"CREATE SCHEMA IF NOT EXISTS {_q(self.schema_name)};"]
         parts.extend(self._view_ddl_for_model(m) for m in self._ordered_models())
         return "\n\n".join(parts) + "\n"
+
+    def to_role_ddl(self) -> str:
+        """Idempotent DDL creating the read-only role and granting it SELECT on the lens.
+
+        The role is a NOLOGIN group role. A login user (with credentials managed
+        outside this DDL) is granted this role and SET ROLEs into it, so this
+        generator never emits secrets.
+        """
+        role = _q(self.role_name)
+        schema = _q(self.schema_name)
+        role_lit = _sql_str(self.role_name)
+        create_role = (
+            "DO $$\n"
+            "BEGIN\n"
+            f"   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_lit}') THEN\n"
+            f"      CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;\n"
+            "   END IF;\n"
+            "END\n"
+            "$$;"
+        )
+        return (
+            "\n".join(
+                [
+                    create_role,
+                    f"GRANT USAGE ON SCHEMA {schema} TO {role};",
+                    f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
+                    f"ALTER ROLE {role} SET default_transaction_read_only = on;",
+                    f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} "
+                    f"GRANT SELECT ON TABLES TO {role};",
+                ]
+            )
+            + "\n"
+        )

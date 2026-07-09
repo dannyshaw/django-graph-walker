@@ -105,3 +105,30 @@ class TestRowFilters:
         spec = GraphSpec(Tag)
         ddl = Lens(spec, schema_name="lens", role_name="r", row_filters={Tag: "   "}).to_view_ddl()
         assert "WHERE" not in ddl
+
+
+class TestRoleDDL:
+    def _ddl(self):
+        spec = GraphSpec(Tag)
+        return Lens(spec, schema_name="staff_lens_masked", role_name="staff_masked").to_role_ddl()
+
+    def test_role_created_idempotently(self):
+        ddl = self._ddl()
+        assert "IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'staff_masked')" in ddl
+        assert 'CREATE ROLE "staff_masked" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;' in ddl
+
+    def test_grants_usage_and_select(self):
+        ddl = self._ddl()
+        assert 'GRANT USAGE ON SCHEMA "staff_lens_masked" TO "staff_masked";' in ddl
+        assert 'GRANT SELECT ON ALL TABLES IN SCHEMA "staff_lens_masked" TO "staff_masked";' in ddl
+
+    def test_role_is_read_only(self):
+        ddl = self._ddl()
+        assert 'ALTER ROLE "staff_masked" SET default_transaction_read_only = on;' in ddl
+
+    def test_default_privileges_for_future_views(self):
+        ddl = self._ddl()
+        assert (
+            'ALTER DEFAULT PRIVILEGES IN SCHEMA "staff_lens_masked" '
+            'GRANT SELECT ON TABLES TO "staff_masked";' in ddl
+        )
