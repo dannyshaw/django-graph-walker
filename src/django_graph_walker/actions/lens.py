@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from django.db.models import Model
 
+from django_graph_walker.discovery import FieldClass, get_model_fields
 from django_graph_walker.spec import GraphSpec, Ignore, Mask
 
 
@@ -127,3 +128,52 @@ class Lens:
             )
             + "\n"
         )
+
+    def to_schema_context(self) -> dict:
+        """LLM-facing map of the lens: views, columns (with types + mask flags),
+        docs, and in-scope relationships. Mirrors what the views actually expose.
+        """
+        in_scope = self.spec.models
+        views = []
+        for model in self._ordered_models():
+            overrides = self.spec.get_overrides(model)
+
+            columns = []
+            for field in model._meta.local_fields:
+                override = overrides.get(field.name)
+                if isinstance(override, Ignore):
+                    continue
+                columns.append(
+                    {
+                        "name": field.column,
+                        "type": field.get_internal_type(),
+                        "help_text": str(getattr(field, "help_text", "") or ""),
+                        "masked": override.strategy if isinstance(override, Mask) else None,
+                    }
+                )
+
+            relationships = []
+            for fi in get_model_fields(model, in_scope=in_scope):
+                if fi.field_class not in (FieldClass.FK_IN_SCOPE, FieldClass.O2O_IN_SCOPE):
+                    continue
+                if isinstance(overrides.get(fi.name), Ignore):
+                    continue
+                relationships.append(
+                    {
+                        "to": fi.related_model._meta.db_table,
+                        "via": fi.field.column,
+                        "kind": fi.field_class.name,
+                    }
+                )
+
+            views.append(
+                {
+                    "view": model._meta.db_table,
+                    "model": model.__name__,
+                    "doc": (model.__doc__ or "").strip(),
+                    "columns": columns,
+                    "relationships": relationships,
+                }
+            )
+
+        return {"schema": self.schema_name, "role": self.role_name, "views": views}

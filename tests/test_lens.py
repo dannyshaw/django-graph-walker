@@ -132,3 +132,34 @@ class TestRoleDDL:
             'ALTER DEFAULT PRIVILEGES IN SCHEMA "staff_lens_masked" '
             'GRANT SELECT ON TABLES TO "staff_masked";' in ddl
         )
+
+
+class TestSchemaContext:
+    def test_top_level_shape(self):
+        spec = GraphSpec(Tag)
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        assert ctx["schema"] == "lens"
+        assert ctx["role"] == "r"
+        assert [v["view"] for v in ctx["views"]] == ["testapp_tag"]
+
+    def test_columns_report_type_and_mask(self):
+        spec = GraphSpec({Author: {"email": Mask("hash")}})
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        cols = {c["name"]: c for c in ctx["views"][0]["columns"]}
+        assert cols["email"]["masked"] == "hash"
+        assert cols["name"]["masked"] is None
+        assert cols["name"]["type"] == "CharField"
+
+    def test_dropped_column_absent(self):
+        spec = GraphSpec({Author: {"email": Ignore()}})
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        names = [c["name"] for c in ctx["views"][0]["columns"]]
+        assert "email" not in names
+
+    def test_relationships_between_in_scope_models(self):
+        # Article + Author in scope -> Article has FK relationship to Author.
+        spec = GraphSpec(Article, Author)
+        ctx = Lens(spec, schema_name="lens", role_name="r").to_schema_context()
+        article = next(v for v in ctx["views"] if v["model"] == "Article")
+        rels = {(r["via"], r["to"]) for r in article["relationships"]}
+        assert ("author_id", "testapp_author") in rels
