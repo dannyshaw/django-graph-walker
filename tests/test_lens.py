@@ -2,7 +2,9 @@
 
 import pytest
 
-from django_graph_walker import Mask
+from django_graph_walker import GraphSpec, Ignore, Mask
+from django_graph_walker.actions.lens import Lens
+from tests.testapp.models import Article, Author, Tag
 
 
 class TestMaskOverride:
@@ -21,3 +23,41 @@ class TestMaskOverride:
         from django_graph_walker import Mask as TopMask
 
         assert TopMask is Mask
+
+
+class TestViewDDL:
+    def test_schema_created_first(self):
+        spec = GraphSpec(Tag)
+        ddl = Lens(spec, schema_name="staff_lens_masked", role_name="staff_masked").to_view_ddl()
+        assert ddl.startswith('CREATE SCHEMA IF NOT EXISTS "staff_lens_masked";')
+
+    def test_plain_view_lists_all_columns(self):
+        spec = GraphSpec(Author)
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        expected = (
+            'CREATE OR REPLACE VIEW "lens"."testapp_author" AS\n'
+            "SELECT\n"
+            '    "id",\n'
+            '    "name",\n'
+            '    "email"\n'
+            'FROM "public"."testapp_author";'
+        )
+        assert expected in ddl
+
+    def test_source_schema_is_configurable(self):
+        spec = GraphSpec(Tag)
+        ddl = Lens(spec, schema_name="lens", role_name="r", source_schema="app").to_view_ddl()
+        assert 'FROM "app"."testapp_tag";' in ddl
+
+    def test_fk_columns_use_db_column_names(self):
+        # Article has FK author -> author_id; only Article in scope so it is a plain column.
+        spec = GraphSpec(Article)
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert '    "author_id",' in ddl
+        assert '    "category_id",' in ddl
+
+    def test_ignore_drops_column(self):
+        spec = GraphSpec({Author: {"email": Ignore()}})
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert '"email"' not in ddl
+        assert '"name"' in ddl  # other columns still present
