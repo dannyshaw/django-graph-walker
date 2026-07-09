@@ -362,8 +362,12 @@ context = lens.to_schema_context()  # {"schema", "role", "views": [...]}
 ```
 
 The role is a read-only NOLOGIN group role: a login user is granted it and
-`SET ROLE`s into it, so no credentials are baked into the generated DDL. Views
-and grants are re-runnable (`CREATE OR REPLACE VIEW`, idempotent role block).
+`SET ROLE`s into it, so no credentials are baked into the generated DDL. Re-running
+the view and role DDL for an unchanged spec is idempotent, but a spec change that
+drops, reorders, or retypes a previously-exposed column requires dropping the view
+first, since Postgres `CREATE OR REPLACE VIEW` cannot remove or reorder existing
+columns. `to_schema_context` includes forward FK/O2O relationships only; many-to-many
+relationships are not included, since the per-model views expose no M2M join key.
 
 ## Management Commands
 

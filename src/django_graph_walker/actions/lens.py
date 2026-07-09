@@ -73,6 +73,13 @@ class Lens:
                 return f"NULL AS {col}"
         return col
 
+    def _uses_hash_mask(self) -> bool:
+        for model in self.spec.models:
+            for override in self.spec.get_overrides(model).values():
+                if isinstance(override, Mask) and override.strategy == "hash":
+                    return True
+        return False
+
     def _view_ddl_for_model(self, model: type[Model]) -> str:
         overrides = self.spec.get_overrides(model)
         db_table = model._meta.db_table
@@ -92,6 +99,11 @@ class Lens:
 
     def to_view_ddl(self) -> str:
         """DDL that (re)creates the lens schema and one view per allowlisted model."""
+        if self._uses_hash_mask() and not self.hash_salt.strip():
+            raise ValueError(
+                "hash_salt is required when any field uses Mask('hash'): "
+                "an empty salt produces unsalted md5, which is trivially reversible."
+            )
         parts = [f"CREATE SCHEMA IF NOT EXISTS {_q(self.schema_name)};"]
         parts.extend(self._view_ddl_for_model(m) for m in self._ordered_models())
         return "\n\n".join(parts) + "\n"

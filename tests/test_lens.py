@@ -84,6 +84,22 @@ class TestMaskingInView:
         ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
         assert 'NULL AS "email"' in ddl
 
+    def test_hash_mask_without_salt_raises(self):
+        spec = GraphSpec({Author: {"email": Mask("hash")}})
+        with pytest.raises(ValueError, match="hash_salt is required"):
+            Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+
+    def test_hash_mask_with_whitespace_salt_raises(self):
+        spec = GraphSpec({Author: {"email": Mask("hash")}})
+        with pytest.raises(ValueError, match="hash_salt is required"):
+            Lens(spec, schema_name="lens", role_name="r", hash_salt="   ").to_view_ddl()
+
+    def test_non_hash_mask_without_salt_is_fine(self):
+        # redact / null do not use the salt, so an empty salt must NOT raise
+        spec = GraphSpec({Author: {"name": Mask("redact"), "email": Mask("null")}})
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert "WHERE" not in ddl  # smoke: it generated without raising
+
 
 class TestRowFilters:
     def test_row_filter_becomes_where_clause(self):
@@ -199,6 +215,8 @@ class TestGraphLensCommand:
             "lens",
             "--role",
             "r",
+            "--salt",
+            "testsalt",
             "--out-ddl",
             str(ddl_path),
             "--out-context",
