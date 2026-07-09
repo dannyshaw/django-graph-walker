@@ -183,3 +183,44 @@ class TestSchemaContext:
         assert "category_id" in vias
         names = {c["name"] for c in article["columns"]}
         assert "author_id" not in names
+
+
+class TestGraphLensCommand:
+    def test_writes_ddl_and_context_files(self, tmp_path):
+        from django.core.management import call_command
+
+        ddl_path = tmp_path / "views.sql"
+        ctx_path = tmp_path / "context.json"
+        call_command(
+            "graph_lens",
+            "--spec",
+            "tests.testapp.specs.author_lens",
+            "--schema",
+            "lens",
+            "--role",
+            "r",
+            "--out-ddl",
+            str(ddl_path),
+            "--out-context",
+            str(ctx_path),
+        )
+        assert 'CREATE OR REPLACE VIEW "lens"."testapp_author"' in ddl_path.read_text()
+        import json
+
+        ctx = json.loads(ctx_path.read_text())
+        assert ctx["views"][0]["view"] == "testapp_author"
+
+    def test_rejects_non_spec_target(self):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        with pytest.raises(CommandError, match="not a GraphSpec"):
+            call_command(
+                "graph_lens",
+                "--spec",
+                "tests.testapp.specs.not_a_spec",
+                "--schema",
+                "lens",
+                "--role",
+                "r",
+            )
