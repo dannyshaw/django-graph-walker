@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from django.db.models import Model
 
-from django_graph_walker.spec import GraphSpec, Ignore
+from django_graph_walker.spec import GraphSpec, Ignore, Mask
 
 
 def _q(identifier: str) -> str:
     """Double-quote a Postgres identifier, doubling any embedded double-quote."""
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _sql_str(value: str) -> str:
+    """Escape a value for inclusion in a single-quoted SQL string literal."""
+    return value.replace("'", "''")
 
 
 class Lens:
@@ -51,14 +56,18 @@ class Lens:
         return sorted(self.spec.models, key=lambda m: m._meta.db_table)
 
     def _column_expr(self, column: str, override) -> str | None:
-        """SELECT expression for a column, or None if the column is dropped.
-
-        Task 3 extends this method with Mask handling; Task 2 covers plain
-        columns and Ignore()-drop only.
-        """
+        """SELECT expression for a column, or None if the column is dropped."""
         if isinstance(override, Ignore):
             return None
-        return _q(column)
+        col = _q(column)
+        if isinstance(override, Mask):
+            if override.strategy == "hash":
+                return f"md5(({col})::text || '{_sql_str(self.hash_salt)}') AS {col}"
+            if override.strategy == "redact":
+                return f"(left(({col})::text, 1) || '***') AS {col}"
+            if override.strategy == "null":
+                return f"NULL AS {col}"
+        return col
 
     def _view_ddl_for_model(self, model: type[Model]) -> str:
         overrides = self.spec.get_overrides(model)

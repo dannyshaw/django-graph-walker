@@ -61,3 +61,25 @@ class TestViewDDL:
         ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
         assert '"email"' not in ddl
         assert '"name"' in ddl  # other columns still present
+
+
+class TestMaskingInView:
+    def test_hash_mask_uses_salt(self):
+        spec = GraphSpec({Author: {"email": Mask("hash")}})
+        ddl = Lens(spec, schema_name="lens", role_name="r", hash_salt="pepper").to_view_ddl()
+        assert 'md5(("email")::text || \'pepper\') AS "email"' in ddl
+
+    def test_hash_mask_escapes_quote_in_salt(self):
+        spec = GraphSpec({Author: {"email": Mask("hash")}})
+        ddl = Lens(spec, schema_name="lens", role_name="r", hash_salt="o'brien").to_view_ddl()
+        assert "|| 'o''brien') AS \"email\"" in ddl
+
+    def test_redact_mask(self):
+        spec = GraphSpec({Author: {"name": Mask("redact")}})
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert '(left(("name")::text, 1) || \'***\') AS "name"' in ddl
+
+    def test_null_mask(self):
+        spec = GraphSpec({Author: {"email": Mask("null")}})
+        ddl = Lens(spec, schema_name="lens", role_name="r").to_view_ddl()
+        assert 'NULL AS "email"' in ddl
